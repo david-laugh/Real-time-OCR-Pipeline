@@ -27,12 +27,25 @@ POST /frame 라우터(api/frame.py)는 `get_frame_sink()`가 돌려준 객체의
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import datetime
+from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Dict, Protocol
+
+from db.supabase import save_ocr_document
+from services import mqtt_service, ocr_service
+from services.embedding_service import create_embedding
+
+logger = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 TMP_FRAMES_DIR = BASE_DIR / "tmp_frames"
+
+# 같은 페이지를 계속 비추면 2초마다 같은 문서가 들어오므로,
+# 세션의 직전 저장 텍스트와 이 비율 이상 같으면 저장하지 않는다.
+DUPLICATE_SIMILARITY = 0.9
+TEXT_PREVIEW_CHARS = 120
 
 
 class FrameSink(Protocol):
@@ -59,7 +72,98 @@ class LocalFolderSink:
         path.write_bytes(data)
 
 
-_sink: FrameSink = LocalFolderSink()
+class OcrSink:
+    """JPEG → OCR → embedding → Supabase 저장, 단계마다 MQTT(ocr/<session_id>/status)로 상태 발행."""
+
+    def __init__(self) -> None:
+        self._last_text: Dict[str, str] = {}
+
+    async def handle(self, session_id: str, jpeg_bytes: bytes) -> dict[str, Any]:
+        stage = "received"
+        await self._notify(session_id, stage, message=f"Frame received ({len(jpeg_bytes)} bytes)")
+        try:
+            stage = "ocr"
+            result = await asyncio.to_thread(ocr_service.extract_text, jpeg_bytes)
+            title, text = result["title"], result["text"]
+            if not text:
+                await self._notify(session_id, "skipped", message="No readable text in frame")
+                return {"stage": "skipped", "reason": "empty"}
+            await self._notify(
+                session_id, "ocr_completed", title=title, text=text,
+                message=f"OCR completed ({len(text)} chars)",
+            )
+
+            if self._is_duplicate(session_id, text):
+                await self._notify(
+                    session_id, "skipped", title=title, text=text,
+                    message="Same document as previous frame",
+                )
+                return {"stage": "skipped", "reason": "duplicate"}
+
+            stage = "embedding"
+            embedding = await create_embedding(text)
+            await self._notify(
+                session_id, "embedding_completed", title=title, text=text,
+                message=f"Embedding created ({len(embedding)} dims)",
+            )
+
+            stage = "store"
+            row = await asyncio.to_thread(
+                save_ocr_document,
+                session_id=session_id,
+                title=title,
+                text=text,
+                embedding=embedding,
+            )
+            # 저장에 성공한 텍스트만 중복 기준으로 삼는다 (실패 시 다음 프레임에서 재시도)
+            self._last_text[session_id] = text
+            document_id = str(row.get("id", ""))
+            logger.info("ocr document stored (session=%s, id=%s)", session_id, document_id)
+            await self._notify(
+                session_id, "stored", title=title, text=text,
+                document_id=document_id, created_at=row.get("created_at"),
+                message="Document stored successfully",
+            )
+            return {"stage": "stored", "document_id": document_id, "chars": len(text)}
+        except Exception as exc:
+            # traceback은 frame_queue가 logger.exception으로 남긴다
+            logger.error("ocr pipeline failed at %s (session=%s): %r", stage, session_id, exc)
+            await self._notify(session_id, "failed", message=f"{stage} failed: {exc}")
+            raise
+
+    def _is_duplicate(self, session_id: str, text: str) -> bool:
+        last = self._last_text.get(session_id)
+        if last is None:
+            return False
+        return SequenceMatcher(None, last, text).ratio() >= DUPLICATE_SIMILARITY
+
+    @staticmethod
+    async def _notify(
+        session_id: str,
+        stage: str,
+        *,
+        message: str,
+        title: str = "",
+        text: str = "",
+        **extra: Any,
+    ) -> None:
+        event = {
+            "type": "ocr_status",
+            "stage": stage,
+            "session_id": session_id,
+            "title": title,
+            "text_preview": text[:TEXT_PREVIEW_CHARS],
+            "message": message,
+            **extra,
+        }
+        # 상태 발행 실패는 OCR 저장에 영향을 주지 않는다
+        try:
+            mqtt_service.publish(mqtt_service.status_topic(session_id), event)
+        except Exception:
+            logger.exception("ocr status publish failed (session=%s)", session_id)
+
+
+_sink: FrameSink = OcrSink()
 
 
 def get_frame_sink() -> FrameSink:
