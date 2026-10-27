@@ -15,8 +15,6 @@ import os
 from functools import lru_cache
 from typing import List
 
-from google import genai
-from google.genai import types
 
 EMBEDDING_MODEL = os.getenv("GEMINI_EMBEDDING_MODEL", "gemini-embedding-001")
 EMBEDDING_DIM = int(os.getenv("GEMINI_EMBEDDING_DIM", "768"))
@@ -24,6 +22,8 @@ EMBEDDING_DIM = int(os.getenv("GEMINI_EMBEDDING_DIM", "768"))
 
 @lru_cache(maxsize=1)
 def get_client() -> genai.Client:
+    from google import genai
+
     # import 시점이 아니라 첫 호출 때 만든다 (키 없이도 서버는 뜨도록)
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
@@ -32,6 +32,8 @@ def get_client() -> genai.Client:
 
 
 def embed_text(text: str) -> List[float]:
+    from google.genai import types
+
     response = get_client().models.embed_content(
         model=EMBEDDING_MODEL,
         contents=text,

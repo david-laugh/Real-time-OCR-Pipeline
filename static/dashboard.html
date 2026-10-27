@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>OCR Pipeline — Dashboard</title>
+<!-- ============================================================
+     [FILE] static/dashboard.html
+     [역할] 실시간 저장 현황 + 텍스트 검색 대시보드
+     [의존] /ws/dashboard (WebSocket), /api/search, /api/documents, /api/stats
+     ============================================================ -->
+<style>
+  /* ── 디자인 토큰 ─────────────────────────────────── */
+  :root {
+    --bg: #16181d;
+    --panel: #1e2128;
+    --panel2: #23272f;
+    --line: #2c313b;
+    --ink: #e8eaed;
+    --muted: #8c94a3;
+    --green: #4ade8a;
+    --blue: #60a5fa;
+    --violet: #a78bfa;
+    --rose: #f87171;
+  }
+
+  * { box-sizing: border-box; margin: 0; }
+
+  html, body {
+    height: 100%;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Pretendard", "Inter", -apple-system, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ── 레이아웃 ────────────────────────────────────── */
+  .dash {
+    display: grid;
+    grid-template-columns: 240px 1fr 1fr;
+    gap: 14px;
+    flex: 1;
+    padding: 14px;
+    overflow: hidden;
+  }
+  @media (max-width: 900px) {
+    .dash { grid-template-columns: 1fr; height: auto; }
+  }
+
+  .zone {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ── 공통 요소 ───────────────────────────────────── */
+  .zone-title {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 14px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .04em;
+  }
+  .badge::before {
+    content: "";
+    width: 7px; height: 7px;
+    border-radius: 50%;
+  }
+  .badge-green::before { background: var(--green); animation: pulse 1.2s infinite; }
+  .badge-gray::before  { background: var(--muted); }
+  @keyframes pulse { 50% { opacity: .2; } }
+
+  /* ── Zone 1: 연결 상태 ───────────────────────────── */
+  .connect-status {
+    padding: 14px;
+    background: var(--panel2);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    margin-bottom: 12px;
+  }
+  .connect-status .label {
+    font-size: 11px;
+    color: var(--muted);
+    margin-bottom: 4px;
+  }
+  .connect-status .value {
+    font-family: "SFMono-Regular", Consolas, monospace;
+    font-size: 13px;
+  }
+  .stat-mini {
+    padding: 14px;
+    background: var(--panel2);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    margin-bottom: 12px;
+    text-align: center;
+  }
+  .stat-mini .label {
+    font-size: 10px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    margin-bottom: 4px;
+  }
+  .stat-mini .value {
+    font-family: "SFMono-Regular", Consolas, monospace;
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--blue);
+  }
+
+  /* ── Zone 2: 실시간 저장 현황 ────────────────────── */
+  .big-number {
+    font-size: 36px;
+    font-weight: 800;
+    color: var(--blue);
+    line-height: 1;
+  }
+  .big-number small {
+    font-size: 14px;
+    font-weight: 400;
+    color: var(--muted);
+  }
+  .progress {
+    height: 6px;
+    background: var(--line);
+    border-radius: 4px;
+    margin: 12px 0 16px;
+    overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%;
+    background: var(--blue);
+    border-radius: 4px;
+    transition: width .4s ease;
+  }
+  .feed {
+    flex: 1;
+    overflow-y: auto;
+  }
+  .feed-item {
+    display: grid;
+    grid-template-columns: 46px 1fr auto;
+    gap: 8px;
+    align-items: center;
+    padding: 9px 10px;
+    margin-bottom: 6px;
+    background: var(--panel2);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    font-size: 13px;
+    animation: slideIn .4s ease;
+  }
+  .feed-item.new {
+    border-color: rgba(96, 165, 250, .5);
+    background: rgba(96, 165, 250, .06);
+  }
+  .feed-item .num {
+    font-family: "SFMono-Regular", Consolas, monospace;
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .feed-item .tag {
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 6px;
+    background: rgba(74, 222, 138, .15);
+    color: var(--green);
+    font-weight: 600;
+  }
+  @keyframes slideIn {
+    from { opacity: 0; transform: translateY(-12px); }
+    to   { opacity: 1; transform: none; }
+  }
+  .feed::-webkit-scrollbar { width: 6px; }
+  .feed::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
+
+  /* ── Zone 3: 검색 ────────────────────────────────── */
+  .search-box {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 14px;
+  }
+  .search-box input {
+    flex: 1;
+    background: #121419;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font: inherit;
+    font-size: 13px;
+    color: var(--ink);
+    outline: none;
+    transition: border-color .2s;
+  }
+  .search-box input:focus { border-color: var(--violet); }
+  .search-box input::placeholder { color: var(--muted); }
+  .search-box button {
+    background: var(--violet);
+    color: #120d1f;
+    border: 0;
+    border-radius: 8px;
+    padding: 0 18px;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: opacity .2s;
+  }
+  .search-box button:hover { opacity: .85; }
+  .search-box button:disabled { opacity: .4; cursor: default; }
+
+  .answer-box {
+    background: #121419;
+    border-left: 3px solid var(--violet);
+    border-radius: 6px;
+    padding: 12px 14px;
+    margin-bottom: 12px;
+    font-size: 13px;
+    line-height: 1.7;
+    white-space: pre-wrap;
+    display: none;
+  }
+  .answer-box.show { display: block; animation: fadeIn .3s ease; }
+
+  .sources {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .source-chip {
+    font-size: 11px;
+    font-family: "SFMono-Regular", Consolas, monospace;
+    padding: 4px 10px;
+    border-radius: 6px;
+    background: var(--panel2);
+    border: 1px solid var(--line);
+    animation: fadeIn .4s ease;
+  }
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to   { opacity: 1; transform: none; }
+  }
+
+  .empty-state {
+    flex: 1;
+    display: grid;
+    place-items: center;
+    color: var(--muted);
+    font-size: 13px;
+  }
+
+  /* ── 로딩 스피너 ─────────────────────────────────── */
+  .spinner {
+    display: none;
+    width: 18px; height: 18px;
+    border: 2px solid var(--line);
+    border-top-color: var(--violet);
+    border-radius: 50%;
+    animation: spin .6s linear infinite;
+  }
+  .spinner.show { display: inline-block; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<!-- ============================================================
+     [LAYOUT] 3-column dashboard
+     zone-1: 연결 상태 + 통계
+     zone-2: 실시간 저장 현황 (피드)
+     zone-3: 텍스트 검색 (FTS5)
+     ============================================================ -->
+<nav style="display:flex;align-items:center;gap:16px;padding:10px 20px;background:var(--panel);border-bottom:1px solid var(--line);">
+  <span style="font-size:14px;font-weight:700;letter-spacing:.02em;">OCR <span style="color:var(--violet);">Pipeline</span></span>
+  <a href="/" style="font-size:12px;font-weight:500;padding:6px 14px;border-radius:6px;color:var(--ink);background:var(--panel2);text-decoration:none;">Dashboard</a>
+  <a href="/viewer" style="font-size:12px;font-weight:500;padding:6px 14px;border-radius:6px;color:var(--muted);text-decoration:none;">Viewer</a>
+</nav>
+<div class="dash">
+
+  <!-- ── Zone 1: 연결 상태 + 통계 ──────────────────── -->
+  <div class="zone" id="zone-connect">
+    <div class="zone-title">
+      연결 상태
+      <span class="badge badge-gray" id="connBadge">대기</span>
+    </div>
+
+    <div class="connect-status">
+      <div class="label">WebSocket</div>
+      <div class="value" id="wsStatus">연결 중...</div>
+    </div>
+
+    <div class="stat-mini">
+      <div class="label">Total Docs</div>
+      <div class="value" id="sideDocCount">0</div>
+    </div>
+
+    <div class="stat-mini">
+      <div class="label">Avg Length</div>
+      <div class="value" id="sideAvgChars">0</div>
+    </div>
+
+    <div class="stat-mini">
+      <div class="label">Tasks</div>
+      <div class="value" id="sideTaskCount">0</div>
+    </div>
+  </div>
+
+  <!-- ── Zone 2: 실시간 저장 현황 ──────────────────── -->
+  <div class="zone" id="zone-feed">
+    <div class="zone-title">
+      실시간 저장 현황
+      <span class="badge badge-blue" id="liveBadge" style="display:none">LIVE</span>
+    </div>
+
+    <div class="big-number">
+      <span id="docCount">0</span><small> 저장됨</small>
+    </div>
+    <div class="progress">
+      <div class="progress-fill" id="progressBar" style="width: 0%"></div>
+    </div>
+
+    <div class="feed" id="feed">
+      <div class="empty-state" id="feedEmpty">아직 저장된 문서가 없습니다</div>
+    </div>
+  </div>
+
+  <!-- ── Zone 3: 텍스트 검색 ───────────────────────── -->
+  <div class="zone" id="zone-search">
+    <div class="zone-title">
+      텍스트 검색
+      <span class="spinner" id="searchSpinner"></span>
+    </div>
+
+    <div class="search-box">
+      <input type="text" id="searchInput" placeholder="저장된 문서에서 검색..." />
+      <button id="searchBtn">검색</button>
+    </div>
+
+    <div class="answer-box" id="answerBox"></div>
+    <div class="sources" id="sources"></div>
+
+    <div class="empty-state" id="searchEmpty">검색어를 입력하세요</div>
+  </div>
+
+</div>
+
+<!-- ============================================================
+     [SCRIPT] 대시보드 로직
+     - WebSocket: 실시간 문서 저장 이벤트 수신
+     - REST: 검색 API 호출
+     ============================================================ -->
+<script>
+(function () {
+  'use strict';
+
+  /* ── [CONFIG] ─────────────────────────────────────── */
+  const WS_PATH   = '/ws/dashboard';
+  const API_SEARCH = '/api/search';
+  const API_DOCS   = '/api/documents';
+  const MAX_FEED   = 30;        // 피드에 표시할 최대 항목 수
+  const TARGET_TOTAL = 100;     // 프로그레스 바 기준 총 문서 수
+
+  /* ── [DOM REFS] ───────────────────────────────────── */
+  const $connBadge    = document.getElementById('connBadge');
+  const $wsStatus     = document.getElementById('wsStatus');
+  const $liveBadge    = document.getElementById('liveBadge');
+  const $sideDocCount = document.getElementById('sideDocCount');
+  const $sideAvgChars = document.getElementById('sideAvgChars');
+  const $sideTaskCount= document.getElementById('sideTaskCount');
+  const $docCount     = document.getElementById('docCount');
+  const $progressBar  = document.getElementById('progressBar');
+  const $feed         = document.getElementById('feed');
+  const $feedEmpty    = document.getElementById('feedEmpty');
+  const $searchInput  = document.getElementById('searchInput');
+  const $searchBtn    = document.getElementById('searchBtn');
+  const $searchSpinner= document.getElementById('searchSpinner');
+  const $answerBox    = document.getElementById('answerBox');
+  const $sources      = document.getElementById('sources');
+  const $searchEmpty  = document.getElementById('searchEmpty');
+
+  /* ── [STATE] ──────────────────────────────────────── */
+  let ws = null;
+  let totalDocs = 0;
+
+  /* ── [WEBSOCKET] 실시간 연결 ──────────────────────── */
+  function connectWs() {
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    ws = new WebSocket(`${proto}://${location.host}${WS_PATH}`);
+
+    ws.onopen = function () {
+      $wsStatus.textContent = '연결됨';
+      $connBadge.className = 'badge badge-green';
+      $connBadge.textContent = '연결됨';
+      $liveBadge.style.display = '';
+    };
+
+    ws.onmessage = function (e) {
+      const msg = JSON.parse(e.data);
+      handleWsMessage(msg);
+    };
+
+    ws.onclose = function () {
+      $wsStatus.textContent = '끊김 — 재연결 중...';
+      $connBadge.className = 'badge badge-gray';
+      $connBadge.textContent = '끊김';
+      $liveBadge.style.display = 'none';
+      setTimeout(connectWs, 2000);
+    };
+
+    ws.onerror = function () {
+      ws.close();
+    };
+  }
+
+  /* ── [WS 메시지 핸들러] ──────────────────────────── */
+  function handleWsMessage(msg) {
+    switch (msg.type) {
+      case 'new_document':
+        addFeedItem(msg.data);
+        break;
+
+      case 'stats':
+        updateStats(msg.data.total);
+        break;
+    }
+  }
+
+  /* ── [FEED] 실시간 저장 현황 ─────────────────────── */
+  function updateStats(count) {
+    totalDocs = count;
+    $docCount.textContent = count;
+    $sideDocCount.textContent = count;
+    $progressBar.style.width = Math.min(100, (count / TARGET_TOTAL) * 100) + '%';
+  }
+
+  function addFeedItem(doc) {
+    $feedEmpty.style.display = 'none';
+    updateStats(totalDocs + 1);
+
+    const el = document.createElement('div');
+    el.className = 'feed-item new';
+    el.innerHTML =
+      '<span class="num">#' + doc.doc_id.replace('doc_', '') + '</span>' +
+      '<span>' + escHtml(doc.title) + '</span>' +
+      '<span class="tag">저장됨</span>';
+
+    $feed.prepend(el);
+
+    // 하이라이트 제거
+    setTimeout(function () { el.classList.remove('new'); }, 2000);
+
+    // 최대 개수 유지
+    while ($feed.children.length > MAX_FEED + 1) {
+      $feed.lastElementChild.remove();
+    }
+  }
+
+  /* ── [SEARCH] 텍스트 검색 (FTS5) ─────────────────── */
+  async function doSearch() {
+    const query = $searchInput.value.trim();
+    if (!query) return;
+
+    $searchBtn.disabled = true;
+    $searchSpinner.classList.add('show');
+    $searchEmpty.style.display = 'none';
+    $answerBox.classList.remove('show');
+    $sources.innerHTML = '';
+
+    try {
+      const res = await fetch(API_SEARCH, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: query, limit: 5 }),
+      });
+      const data = await res.json();
+
+      if (data.sources && data.sources.length > 0) {
+        $answerBox.textContent = data.answer;
+        $answerBox.classList.add('show');
+
+        data.sources.forEach(function (src) {
+          const chip = document.createElement('span');
+          chip.className = 'source-chip';
+          chip.textContent = '출처 ' + src.doc_id + ' — ' + src.title;
+          $sources.appendChild(chip);
+        });
+      } else {
+        $answerBox.textContent = data.answer || '결과 없음';
+        $answerBox.classList.add('show');
+      }
+    } catch (err) {
+      $answerBox.textContent = '검색 중 오류가 발생했습니다.';
+      $answerBox.classList.add('show');
+    } finally {
+      $searchBtn.disabled = false;
+      $searchSpinner.classList.remove('show');
+    }
+  }
+
+  $searchBtn.addEventListener('click', doSearch);
+  $searchInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') doSearch();
+  });
+
+  /* ── [INIT] 초기 데이터 로드 ─────────────────────── */
+  async function loadInitial() {
+    try {
+      const [docsRes, statsRes, tasksRes] = await Promise.all([
+        fetch(API_DOCS + '?limit=20'),
+        fetch('/api/stats'),
+        fetch('/api/tasks'),
+      ]);
+      const docs = await docsRes.json();
+      const stats = await statsRes.json();
+      const tasks = await tasksRes.json();
+
+      $sideDocCount.textContent = stats.total;
+      $sideAvgChars.textContent = stats.avg_chars;
+      $sideTaskCount.textContent = tasks.length;
+
+      if (docs.length > 0) {
+        $feedEmpty.style.display = 'none';
+        docs.forEach(function (doc) {
+          const el = document.createElement('div');
+          el.className = 'feed-item';
+          el.innerHTML =
+            '<span class="num">#' + doc.doc_id.replace('doc_', '') + '</span>' +
+            '<span>' + escHtml(doc.title) + '</span>' +
+            '<span class="tag">저장됨</span>';
+          $feed.appendChild(el);
+        });
+      }
+    } catch (e) {
+      // 첫 로드 실패는 무시 — WS로 이어짐
+    }
+  }
+
+  /* ── [UTIL] ───────────────────────────────────────── */
+  function escHtml(s) {
+    var d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+  }
+
+  /* ── [BOOT] ───────────────────────────────────────── */
+  loadInitial();
+  connectWs();
+})();
+</script>
+</body>
+</html>
