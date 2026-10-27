@@ -313,8 +313,8 @@
       this._els.url.href = url;
       this._renderWarning();
       this._renderQr(url);
-      this._setStatus("waiting", null);
       this._emit("session-change", { sessionId: this._sessionId, cameraUrl: url });
+      this._setStatus("waiting", null);
       this._startPolling();
     }
 

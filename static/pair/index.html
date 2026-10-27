@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>휴대폰 연결</title>
+  <!--
+    Standalone test page for <qr-pairing>.
+    Query options:
+      ?pages=1             use the GitHub Pages camera page as the QR target
+      ?camera-url=<tpl>    custom QR template ({session}, {api})
+      ?api-base=<origin>   status API server (default: this page's origin)
+  -->
+  <style>
+    :root {
+      --bg: #f6f8fa;
+      --fg: #1f2328;
+      --muted: #656d76;
+      --border: #d0d7de;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #111418; --fg: #f1f3f5; --muted: #9aa3ad; --border: #3a414c; }
+    }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--fg);
+      font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+    }
+    main {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 24px 16px;
+      display: grid;
+      gap: 20px;
+      grid-template-columns: minmax(0, 320px) minmax(0, 1fr);
+      align-items: start;
+    }
+    @media (max-width: 640px) { main { grid-template-columns: minmax(0, 1fr); } }
+    h1 { grid-column: 1 / -1; margin: 0; font-size: 20px; }
+    h2 { margin: 0 0 8px; font-size: 14px; color: var(--muted); }
+    ol {
+      margin: 0;
+      padding: 8px 8px 8px 28px;
+      max-height: 360px;
+      overflow-y: auto;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font: 12px/1.6 ui-monospace, Menlo, monospace;
+      overflow-wrap: anywhere;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>휴대폰 연결 (QR 테스트)</h1>
+    <qr-pairing id="pairing"></qr-pairing>
+    <section>
+      <h2>이벤트 로그 (session-change / status-change)</h2>
+      <ol id="log"></ol>
+    </section>
+  </main>
+
+  <script>
+    // Apply query options before the widget script (deferred) upgrades the element
+    (function () {
+      var PAGES_TEMPLATE = "https://david-laugh.github.io/Real-time-OCR-Pipeline/?session={session}&api={api}";
+      var params = new URLSearchParams(location.search);
+      var el = document.getElementById("pairing");
+      var cameraUrl = params.get("camera-url") || (params.get("pages") === "1" ? PAGES_TEMPLATE : "");
+      if (cameraUrl) el.setAttribute("camera-url", cameraUrl);
+      if (params.get("api-base")) el.setAttribute("api-base", params.get("api-base"));
+
+      var log = document.getElementById("log");
+      function append(type, detail) {
+        var li = document.createElement("li");
+        var time = new Date().toLocaleTimeString();
+        var info = type === "session-change"
+          ? detail.sessionId + " → " + detail.cameraUrl
+          : detail.sessionId + " → " + detail.state;
+        li.textContent = time + "  " + type + "  " + info;
+        log.prepend(li);
+      }
+      el.addEventListener("session-change", function (e) { append(e.type, e.detail); });
+      el.addEventListener("status-change", function (e) { append(e.type, e.detail); });
+    })();
+  </script>
+  <script src="/static/pair/qr-pairing.js?v=2026-10-27.1" defer></script>
+</body>
+</html>
