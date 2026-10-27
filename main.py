@@ -61,7 +61,10 @@ app.add_middleware(
 # 1번 (모바일 카메라): /camera, /frame
 app.include_router(camera.router)
 app.include_router(frame.router)
-app.include_router(routes.router)
+app.include_router(session.router)
+app.include_router(pair.router)
+# 2번 (OCR):
+# 3번 (대시보드/RAG):
 # ---------------------------------------------------------------------------
 
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
