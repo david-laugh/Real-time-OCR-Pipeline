@@ -15,3 +15,11 @@ tmp_frames/
 Thumbs.db
 .vscode/
 .idea/
+
+data/
+*.egg-info/
+dist/
+build/
+.test-deps/
+
+.claude/

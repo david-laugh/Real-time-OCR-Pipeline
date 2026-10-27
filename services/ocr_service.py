@@ -14,7 +14,6 @@ import threading
 from statistics import median
 from typing import Dict, List, Optional
 
-import easyocr
 
 MIN_CONFIDENCE = 0.3        # 이보다 낮은 박스는 버린다 (잡음/오인식)
 TITLE_HEIGHT_RATIO = 1.3    # 첫 줄 글자 높이가 본문의 이 배수 이상이면 제목
@@ -71,6 +70,8 @@ def _get_reader() -> easyocr.Reader:
     # import 시점이 아니라 첫 프레임 때 모델을 올린다 (서버 기동을 막지 않도록)
     global _reader
     if _reader is None:
+        import easyocr
+
         _reader = easyocr.Reader(["en"], verbose=False)
     return _reader
 

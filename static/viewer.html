@@ -1,0 +1,1286 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>OCR Pipeline — Document Viewer</title>
+<!-- ============================================================
+     [FILE] static/viewer.html
+     [역할] 문서 뷰어 — Task 기반 그룹 탐색 + 좌우 캐러셀 + 전문검색
+     [의존] /api/documents, /api/documents/{doc_id}, /api/search,
+            /api/tasks, /api/tasks/{task_id}/docs, /ws/dashboard
+     ============================================================ -->
+<style>
+  :root {
+    --bg: #16181d;
+    --panel: #1e2128;
+    --panel2: #23272f;
+    --line: #2c313b;
+    --ink: #e8eaed;
+    --muted: #8c94a3;
+    --green: #4ade8a;
+    --blue: #60a5fa;
+    --violet: #a78bfa;
+    --rose: #f87171;
+    --card-bg: #ffffff;
+    --card-ink: #101215;
+    --amber: #fbbf24;
+  }
+
+  * { box-sizing: border-box; margin: 0; }
+
+  html, body {
+    height: 100%;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Pretendard", "Inter", -apple-system, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ── 전체 레이아웃 ─────────────────────────────────── */
+  .app {
+    display: grid;
+    grid-template-rows: auto 1fr;
+    height: 100%;
+  }
+
+  /* ── 헤더 / 네비게이션 ─────────────────────────────── */
+  .topbar {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 12px 20px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--line);
+  }
+  .topbar .logo {
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: .02em;
+    white-space: nowrap;
+  }
+  .topbar .logo span { color: var(--violet); }
+
+  .nav-links {
+    display: flex;
+    gap: 4px;
+  }
+  .nav-links a {
+    font-size: 12px;
+    font-weight: 500;
+    padding: 6px 14px;
+    border-radius: 6px;
+    color: var(--muted);
+    text-decoration: none;
+    transition: all .15s;
+  }
+  .nav-links a:hover { color: var(--ink); background: var(--panel2); }
+  .nav-links a.active { color: var(--ink); background: var(--panel2); }
+
+  .topbar-right {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .ws-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--muted);
+    transition: background .3s;
+  }
+  .ws-dot.connected { background: var(--green); animation: pulse 1.2s infinite; }
+  @keyframes pulse { 50% { opacity: .3; } }
+
+  .doc-counter {
+    font-size: 12px;
+    font-family: "SFMono-Regular", Consolas, monospace;
+    color: var(--muted);
+  }
+  .doc-counter b { color: var(--blue); font-weight: 700; }
+
+  /* ── 메인 컨텐츠 영역 ─────────────────────────────── */
+  .main {
+    display: grid;
+    grid-template-columns: 300px 1fr;
+    overflow: hidden;
+  }
+  @media (max-width: 860px) {
+    .main { grid-template-columns: 1fr; }
+    .detail-pane { display: none; }
+    .detail-pane.mobile-show { display: flex; position: fixed; inset: 0; z-index: 100; }
+  }
+
+  /* ── 사이드: Task 목록 + 검색 ─────────────────────── */
+  .sidebar {
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid var(--line);
+    background: var(--panel);
+    overflow: hidden;
+  }
+
+  /* Task 필터 칩 */
+  .task-filter {
+    padding: 14px 14px 0;
+  }
+  .task-filter-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+  .task-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding-bottom: 12px;
+  }
+  .task-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 12px;
+    border-radius: 16px;
+    border: 1px solid var(--line);
+    background: var(--panel2);
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all .15s;
+    white-space: nowrap;
+  }
+  .task-chip:hover { color: var(--ink); border-color: var(--muted); transform: translateY(-1px); }
+  .task-chip:active { transform: scale(.96); }
+  .task-chip.active { color: var(--violet); border-color: var(--violet); background: rgba(167,139,250,.1); box-shadow: 0 0 0 1px rgba(167,139,250,.2); }
+  .task-chip .chip-count {
+    font-size: 10px;
+    font-weight: 700;
+    background: rgba(255,255,255,.08);
+    border-radius: 8px;
+    padding: 1px 6px;
+    min-width: 18px;
+    text-align: center;
+  }
+  .task-chip.active .chip-count { background: rgba(167,139,250,.2); }
+
+  /* 검색 바 */
+  .search-area {
+    padding: 14px;
+    border-bottom: 1px solid var(--line);
+  }
+  .search-wrap {
+    position: relative;
+  }
+  .search-wrap svg {
+    position: absolute;
+    left: 11px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 15px; height: 15px;
+    fill: none;
+    stroke: var(--muted);
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .search-wrap input {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 9px 10px 9px 34px;
+    font: inherit;
+    font-size: 13px;
+    color: var(--ink);
+    outline: none;
+    transition: border-color .2s;
+  }
+  .search-wrap input:focus { border-color: var(--violet); }
+  .search-wrap input::placeholder { color: var(--muted); }
+
+  .search-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 8px;
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .search-meta .count b { color: var(--ink); }
+
+  .sort-select {
+    background: transparent;
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    padding: 3px 6px;
+    font: inherit;
+    font-size: 11px;
+    color: var(--muted);
+    cursor: pointer;
+    outline: none;
+  }
+
+  /* Task 목록 */
+  .task-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+  }
+  .task-list::-webkit-scrollbar { width: 5px; }
+  .task-list::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
+
+  .task-item {
+    padding: 12px;
+    margin-bottom: 6px;
+    background: var(--panel2);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .task-item:hover { border-color: var(--muted); transform: translateX(2px); }
+  .task-item.selected { border-color: var(--violet); background: rgba(167,139,250,.08); box-shadow: -3px 0 0 var(--violet); }
+  .task-item.new-item { animation: cardIn .5s ease; }
+
+  @keyframes cardIn {
+    from { opacity: 0; transform: translateX(-16px); }
+    to   { opacity: 1; transform: none; }
+  }
+
+  .task-item-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 4px;
+  }
+  .task-item-name {
+    font-size: 13px;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+  }
+  .task-item-badge {
+    font-family: "SFMono-Regular", Consolas, monospace;
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--blue);
+    background: rgba(96,165,250,.1);
+    border-radius: 8px;
+    padding: 2px 8px;
+    flex-shrink: 0;
+    margin-left: 8px;
+  }
+  .task-item-time {
+    font-size: 10px;
+    color: var(--muted);
+  }
+
+  .empty-list {
+    padding: 40px 20px;
+    text-align: center;
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.8;
+  }
+
+  /* ── 상세 보기 패널 (캐러셀) ───────────────────────── */
+  .detail-pane {
+    display: flex;
+    flex-direction: column;
+    background: var(--bg);
+    overflow: hidden;
+  }
+
+  .detail-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--line);
+    flex-shrink: 0;
+  }
+  .detail-toolbar .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font: inherit;
+    font-size: 12px;
+    color: var(--muted);
+    background: var(--panel2);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 6px 12px;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .detail-toolbar .btn:hover { color: var(--ink); border-color: var(--muted); background: rgba(255,255,255,.04); }
+  .detail-toolbar .btn:active { transform: scale(.95); }
+  .detail-toolbar .btn.active { color: var(--violet); border-color: var(--violet); }
+  .detail-toolbar .spacer { flex: 1; }
+
+  /* 캐러셀 네비게이션 */
+  .carousel-nav {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .carousel-nav .nav-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px; height: 36px;
+    background: var(--panel2);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    color: var(--muted);
+    font-size: 16px;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .carousel-nav .nav-btn:hover:not(:disabled) { color: var(--violet); border-color: var(--violet); background: rgba(167,139,250,.1); transform: scale(1.05); }
+  .carousel-nav .nav-btn:active:not(:disabled) { transform: scale(.95); }
+  .carousel-nav .nav-btn:disabled { opacity: .25; cursor: default; }
+  .carousel-nav .nav-btn { transition: all .15s cubic-bezier(.4,0,.2,1); }
+  .carousel-pos {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ink);
+    min-width: 50px;
+    text-align: center;
+  }
+  .carousel-pos .of { color: var(--muted); font-weight: 400; }
+
+  /* 페이지 인디케이터 (도트) */
+  .page-dots {
+    display: flex;
+    justify-content: center;
+    gap: 6px;
+    padding: 10px 0 6px;
+    flex-shrink: 0;
+  }
+  .page-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--line);
+    cursor: pointer;
+    transition: all .25s cubic-bezier(.4,0,.2,1);
+  }
+  .page-dot:hover { background: var(--muted); transform: scale(1.3); }
+  .page-dot.active { background: var(--violet); width: 22px; border-radius: 4px; box-shadow: 0 0 6px rgba(167,139,250,.4); }
+
+  .detail-scroll {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    justify-content: center;
+    padding: 30px 20px;
+  }
+  .detail-scroll::-webkit-scrollbar { width: 6px; }
+  .detail-scroll::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
+
+  /* 카드 스타일 문서 렌더링 */
+  .doc-render {
+    width: 100%;
+    max-width: 620px;
+  }
+
+  .doc-render-card {
+    background: var(--card-bg);
+    color: var(--card-ink);
+    border-radius: 8px;
+    padding: 48px 44px;
+    box-shadow: 0 4px 12px rgba(0,0,0,.15), 0 24px 56px rgba(0,0,0,.35);
+    font-family: "Iowan Old Style", Georgia, "Times New Roman", serif;
+    font-size: 15px;
+    line-height: 2.0;
+    letter-spacing: .01em;
+    transition: background .3s, color .3s, box-shadow .3s, transform .3s;
+    word-spacing: .05em;
+    min-height: 300px;
+  }
+  .doc-render-card.theme-dark {
+    background: #101215;
+    color: #f2f4f7;
+  }
+  .doc-render-card.theme-paper {
+    background: #f6f1e4;
+    color: #23201a;
+  }
+  .doc-render-card.font-sans {
+    font-family: "Helvetica Neue", Arial, "Segoe UI", sans-serif;
+  }
+  .doc-render-card.font-mono {
+    font-family: "SFMono-Regular", Consolas, "Courier New", monospace;
+    font-size: 13px;
+  }
+
+  .doc-render-card h2 {
+    margin: 0 0 1.2em;
+    font-size: .8em;
+    font-weight: 600;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    opacity: .55;
+  }
+  .doc-render-card p {
+    margin: 0 0 1.2em;
+  }
+  .doc-render-card p:last-child { margin-bottom: 0; }
+
+  .doc-render-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    margin-top: 20px;
+    padding-top: 16px;
+    border-top: 1px solid var(--line);
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .doc-render-meta b { color: var(--ink); font-weight: 600; }
+
+  /* 빈 상태 */
+  .detail-empty {
+    flex: 1;
+    display: grid;
+    place-items: center;
+    color: var(--muted);
+    font-size: 13px;
+    text-align: center;
+    line-height: 2;
+  }
+  .detail-empty .big-icon {
+    font-size: 56px;
+    margin-bottom: 16px;
+    opacity: .25;
+    animation: floatIcon 3s ease-in-out infinite;
+  }
+  @keyframes floatIcon { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
+  .detail-empty kbd {
+    font-family: "SFMono-Regular", Consolas, monospace;
+    font-size: 10px;
+    background: var(--panel2);
+    border: 1px solid var(--line);
+    border-bottom-width: 2px;
+    border-radius: 4px;
+    padding: 1px 5px;
+    color: var(--ink);
+  }
+
+  /* ── 모바일 뒤로가기 ───────────────────────────────── */
+  .mobile-back { display: none; }
+  @media (max-width: 860px) {
+    .mobile-back { display: inline-flex; }
+  }
+
+  /* ── 토스트 알림 ───────────────────────────────────── */
+  .toast-container {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    z-index: 200;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .toast {
+    padding: 10px 18px;
+    background: var(--panel);
+    border: 1px solid var(--green);
+    border-left: 3px solid var(--green);
+    border-radius: 8px;
+    font-size: 12px;
+    color: var(--ink);
+    box-shadow: 0 8px 24px rgba(0,0,0,.5);
+    backdrop-filter: blur(8px);
+    animation: toastIn .35s cubic-bezier(.25,.8,.25,1), toastOut .35s ease 2.65s forwards;
+  }
+  @keyframes toastIn { from { opacity: 0; transform: translateX(20px); } }
+  @keyframes toastOut { to { opacity: 0; transform: translateX(20px); } }
+
+  /* ── 캐러셀 슬라이드 전환 ──────────────────────────── */
+  .slide-left-enter  { animation: slideLeftIn .3s cubic-bezier(.25,.8,.25,1); }
+  .slide-right-enter { animation: slideRightIn .3s cubic-bezier(.25,.8,.25,1); }
+  @keyframes slideLeftIn  { from { opacity: 0; transform: translateX(60px) scale(.97); } to { opacity: 1; transform: none; } }
+  @keyframes slideRightIn { from { opacity: 0; transform: translateX(-60px) scale(.97); } to { opacity: 1; transform: none; } }
+
+  /* ── 프로그레스 바 ─────────────────────────────────── */
+  .progress-bar {
+    height: 4px;
+    background: var(--line);
+    flex-shrink: 0;
+    position: relative;
+  }
+  .progress-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--violet), var(--blue));
+    border-radius: 0 2px 2px 0;
+    transition: width .35s cubic-bezier(.4,0,.2,1);
+    box-shadow: 0 0 8px rgba(167,139,250,.35);
+  }
+
+  /* ── 엣지 호버 화살표 ─────────────────────────────── */
+  .edge-arrow {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 52px; height: 90px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(22,24,29,.85);
+    color: var(--muted);
+    font-size: 20px;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity .25s, background .2s, color .2s;
+    z-index: 10;
+    border: none;
+    backdrop-filter: blur(6px);
+  }
+  .edge-arrow.left { left: 0; border-radius: 0 12px 12px 0; }
+  .edge-arrow.right { right: 0; border-radius: 12px 0 0 12px; }
+  .detail-scroll-wrap:hover .edge-arrow { opacity: .7; }
+  .edge-arrow:hover { opacity: 1 !important; background: rgba(167,139,250,.25); color: var(--violet); }
+  .edge-arrow:disabled { display: none; }
+
+  .detail-scroll-wrap {
+    position: relative;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ── 단축키 도움말 오버레이 ─────────────────────────── */
+  .shortcut-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,.7);
+    z-index: 300;
+    display: none;
+    place-items: center;
+    backdrop-filter: blur(4px);
+  }
+  .shortcut-overlay.show { display: grid; }
+  .shortcut-panel {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 32px 40px;
+    max-width: 420px;
+    width: 90%;
+    box-shadow: 0 20px 60px rgba(0,0,0,.6);
+  }
+  .shortcut-panel h3 {
+    font-size: 15px;
+    font-weight: 700;
+    margin-bottom: 20px;
+    color: var(--violet);
+  }
+  .shortcut-group {
+    margin-bottom: 16px;
+  }
+  .shortcut-group-title {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+  .shortcut-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 5px 0;
+    font-size: 13px;
+    color: var(--ink);
+  }
+  .shortcut-row .keys {
+    display: flex;
+    gap: 4px;
+  }
+  .shortcut-row kbd {
+    font-family: "SFMono-Regular", Consolas, monospace;
+    font-size: 11px;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-bottom-width: 2px;
+    border-radius: 4px;
+    padding: 2px 8px;
+    color: var(--violet);
+    min-width: 24px;
+    text-align: center;
+  }
+  .shortcut-close {
+    margin-top: 16px;
+    text-align: center;
+    font-size: 11px;
+    color: var(--muted);
+  }
+
+  /* ── 휠/스와이프 방향 힌트 ─────────────────────────── */
+  .scroll-hint {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 56px;
+    color: var(--violet);
+    opacity: 0;
+    pointer-events: none;
+    z-index: 50;
+    transition: opacity .15s;
+    text-shadow: 0 0 20px rgba(167,139,250,.5);
+  }
+  .scroll-hint.flash { opacity: .5; animation: hintPop .25s ease; }
+  @keyframes hintPop { 0% { transform: translate(-50%,-50%) scale(.7); } 50% { transform: translate(-50%,-50%) scale(1.1); } 100% { transform: translate(-50%,-50%) scale(1); } }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <!-- ── 상단 바 ───────────────────────────────────── -->
+  <header class="topbar">
+    <div class="logo">OCR <span>Pipeline</span></div>
+    <nav class="nav-links">
+      <a href="/">Dashboard</a>
+      <a href="/viewer" class="active">Viewer</a>
+    </nav>
+    <div class="topbar-right">
+      <div class="ws-dot" id="wsDot" title="WebSocket"></div>
+      <div class="doc-counter"><b id="totalCount">0</b> docs</div>
+    </div>
+  </header>
+
+  <!-- ── 메인 ──────────────────────────────────────── -->
+  <div class="main">
+
+    <!-- 사이드: Task 필터 + Task 목록 -->
+    <aside class="sidebar">
+      <div class="search-area">
+        <div class="search-wrap">
+          <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="21" y2="21"/></svg>
+          <input type="text" id="searchInput" placeholder="문서 검색... (Enter)" />
+        </div>
+        <div class="search-meta">
+          <span class="count"><b id="listCount">0</b>개 항목</span>
+          <select class="sort-select" id="sortSelect">
+            <option value="recent">최신순</option>
+            <option value="oldest">오래된순</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="task-filter" id="taskFilter">
+        <div class="task-filter-label">Tasks</div>
+        <div class="task-chips" id="taskChips"></div>
+      </div>
+
+      <div class="task-list" id="taskList">
+        <div class="empty-list" id="emptyList">
+          Task가 없습니다<br/>
+          <span style="font-size: 11px;">POST /api/process 로 텍스트를 전송하세요</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- 상세 보기: 캐러셀 -->
+    <section class="detail-pane" id="detailPane">
+      <div class="detail-toolbar" id="detailToolbar" style="display: none;">
+        <button class="btn mobile-back" id="backBtn" title="목록으로">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
+          목록
+        </button>
+        <button class="btn" id="themeToggle" title="테마 전환">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+          테마
+        </button>
+        <button class="btn" id="fontToggle" title="서체 전환">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><text x="4" y="18" font-size="16" fill="currentColor" stroke="none">A</text></svg>
+          서체
+        </button>
+        <button class="btn" id="helpBtn" title="단축키 도움말 (?)">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          ?
+        </button>
+        <div class="spacer"></div>
+        <div class="carousel-nav">
+          <button class="nav-btn" id="prevDoc" title="이전 문서 (←)">&larr;</button>
+          <span class="carousel-pos" id="carouselPos">—</span>
+          <button class="nav-btn" id="nextDoc" title="다음 문서 (→)">&rarr;</button>
+        </div>
+      </div>
+
+      <div class="detail-empty" id="detailEmpty">
+        <div>
+          <div class="big-icon">&#128196;</div>
+          Task를 선택하면 문서를 탐색할 수 있습니다<br/>
+          <kbd>&larr;</kbd> <kbd>&rarr;</kbd> 좌우 이동 &nbsp; <kbd>/</kbd> 검색 &nbsp; <kbd>j</kbd> <kbd>k</kbd> Task 탐색
+        </div>
+      </div>
+
+      <div class="progress-bar" id="progressBar" style="display: none;">
+        <div class="progress-bar-fill" id="progressFill"></div>
+      </div>
+
+      <div class="page-dots" id="pageDots" style="display: none;"></div>
+
+      <div class="detail-scroll-wrap" id="detailScrollWrap" style="display: none;">
+        <div class="detail-scroll" id="detailScroll">
+          <div class="doc-render" id="docRender">
+            <div class="doc-render-card" id="renderCard">
+              <h2 id="renderTitle"></h2>
+              <div id="renderBody"></div>
+            </div>
+            <div class="doc-render-meta" id="renderMeta"></div>
+          </div>
+        </div>
+        <button class="edge-arrow left" id="edgeLeft" title="이전 (←)">&larr;</button>
+        <button class="edge-arrow right" id="edgeRight" title="다음 (→)">&rarr;</button>
+      </div>
+    </section>
+
+  </div>
+</div>
+
+<div class="toast-container" id="toastContainer"></div>
+<div class="scroll-hint" id="scrollHint"></div>
+
+<!-- 단축키 도움말 -->
+<div class="shortcut-overlay" id="shortcutOverlay">
+  <div class="shortcut-panel">
+    <h3>Keyboard Shortcuts</h3>
+    <div class="shortcut-group">
+      <div class="shortcut-group-title">문서 탐색</div>
+      <div class="shortcut-row"><span>이전 문서</span><span class="keys"><kbd>&larr;</kbd></span></div>
+      <div class="shortcut-row"><span>다음 문서</span><span class="keys"><kbd>&rarr;</kbd></span></div>
+      <div class="shortcut-row"><span>첫 문서</span><span class="keys"><kbd>Home</kbd></span></div>
+      <div class="shortcut-row"><span>마지막 문서</span><span class="keys"><kbd>End</kbd></span></div>
+      <div class="shortcut-row"><span>마우스 휠</span><span class="keys"><kbd>Wheel</kbd></span></div>
+    </div>
+    <div class="shortcut-group">
+      <div class="shortcut-group-title">Task 탐색</div>
+      <div class="shortcut-row"><span>이전 Task</span><span class="keys"><kbd>k</kbd> <kbd>&uarr;</kbd></span></div>
+      <div class="shortcut-row"><span>다음 Task</span><span class="keys"><kbd>j</kbd> <kbd>&darr;</kbd></span></div>
+    </div>
+    <div class="shortcut-group">
+      <div class="shortcut-group-title">기타</div>
+      <div class="shortcut-row"><span>검색</span><span class="keys"><kbd>/</kbd></span></div>
+      <div class="shortcut-row"><span>테마 전환</span><span class="keys"><kbd>t</kbd></span></div>
+      <div class="shortcut-row"><span>서체 전환</span><span class="keys"><kbd>f</kbd></span></div>
+      <div class="shortcut-row"><span>도움말</span><span class="keys"><kbd>?</kbd></span></div>
+      <div class="shortcut-row"><span>닫기</span><span class="keys"><kbd>Esc</kbd></span></div>
+    </div>
+    <div class="shortcut-close">아무 키나 누르면 닫힙니다</div>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var API_TASKS     = '/api/tasks';
+  var API_TASK_DOCS = '/api/tasks/';
+  var API_DOCS      = '/api/documents';
+  var API_SEARCH    = '/api/search';
+  var WS_PATH       = '/ws/dashboard';
+
+  /* ── STATE ───────────────────────────────────────── */
+  var tasks = [];
+  var selectedTaskIdx = -1;
+  var selectedTaskId = null;
+  var taskDocs = [];
+  var docIdx = 0;
+  var searchMode = false;
+  var searchDocs = [];
+  var ws = null;
+
+  var themes = ['', 'theme-dark', 'theme-paper'];
+  var fonts = ['', 'font-sans', 'font-mono'];
+  var fontLabels = ['Serif', 'Sans', 'Mono'];
+  var themeIdx = 0;
+  var fontIdx = 0;
+
+  /* ── DOM ─────────────────────────────────────────── */
+  var $searchInput  = document.getElementById('searchInput');
+  var $listCount    = document.getElementById('listCount');
+  var $taskChips    = document.getElementById('taskChips');
+  var $taskList     = document.getElementById('taskList');
+  var $emptyList    = document.getElementById('emptyList');
+  var $sortSelect   = document.getElementById('sortSelect');
+  var $totalCount   = document.getElementById('totalCount');
+  var $wsDot        = document.getElementById('wsDot');
+  var $detailPane   = document.getElementById('detailPane');
+  var $detailToolbar= document.getElementById('detailToolbar');
+  var $detailEmpty  = document.getElementById('detailEmpty');
+  var $detailScroll = document.getElementById('detailScroll');
+  var $pageDots     = document.getElementById('pageDots');
+  var $renderCard   = document.getElementById('renderCard');
+  var $renderTitle  = document.getElementById('renderTitle');
+  var $renderBody   = document.getElementById('renderBody');
+  var $renderMeta   = document.getElementById('renderMeta');
+  var $carouselPos  = document.getElementById('carouselPos');
+  var $prevDoc      = document.getElementById('prevDoc');
+  var $nextDoc      = document.getElementById('nextDoc');
+  var $themeToggle  = document.getElementById('themeToggle');
+  var $fontToggle   = document.getElementById('fontToggle');
+  var $backBtn      = document.getElementById('backBtn');
+  var $toastCont    = document.getElementById('toastContainer');
+  var $progressBar  = document.getElementById('progressBar');
+  var $progressFill = document.getElementById('progressFill');
+  var $scrollWrap   = document.getElementById('detailScrollWrap');
+  var $edgeLeft     = document.getElementById('edgeLeft');
+  var $edgeRight    = document.getElementById('edgeRight');
+  var $helpBtn      = document.getElementById('helpBtn');
+  var $shortcutOvl  = document.getElementById('shortcutOverlay');
+  var $scrollHint   = document.getElementById('scrollHint');
+
+  /* ── LOAD TASKS ─────────────────────────────────── */
+  async function loadTasks() {
+    try {
+      var res = await fetch(API_TASKS);
+      tasks = await res.json();
+      var total = tasks.reduce(function (s, t) { return s + t.doc_count; }, 0);
+      $totalCount.textContent = total;
+      renderTaskChips();
+      renderTaskList();
+    } catch (e) {}
+  }
+
+  /* ── TASK CHIPS ─────────────────────────────────── */
+  function renderTaskChips() {
+    $taskChips.innerHTML = '';
+    var allChip = document.createElement('span');
+    allChip.className = 'task-chip' + (selectedTaskId === null && !searchMode ? ' active' : '');
+    allChip.innerHTML = '전체 <span class="chip-count">' + tasks.reduce(function (s, t) { return s + t.doc_count; }, 0) + '</span>';
+    allChip.addEventListener('click', function () {
+      selectedTaskId = null;
+      selectedTaskIdx = -1;
+      searchMode = false;
+      $searchInput.value = '';
+      renderTaskChips();
+      renderTaskList();
+      hideDetail();
+    });
+    $taskChips.appendChild(allChip);
+
+    tasks.forEach(function (t) {
+      var chip = document.createElement('span');
+      chip.className = 'task-chip' + (selectedTaskId === t.task_id ? ' active' : '');
+      chip.innerHTML = esc(t.task_id) + ' <span class="chip-count">' + t.doc_count + '</span>';
+      chip.addEventListener('click', function () { selectTask(t.task_id); });
+      $taskChips.appendChild(chip);
+    });
+  }
+
+  /* ── TASK LIST ─────────────────────────────────── */
+  function renderTaskList() {
+    $taskList.innerHTML = '';
+
+    if (searchMode) {
+      $listCount.textContent = searchDocs.length;
+      if (searchDocs.length === 0) {
+        $emptyList.textContent = '검색 결과가 없습니다';
+        $emptyList.style.display = '';
+        $taskList.appendChild($emptyList);
+        return;
+      }
+      $emptyList.style.display = 'none';
+      searchDocs.forEach(function (doc, i) {
+        var el = document.createElement('div');
+        el.className = 'task-item' + (docIdx === i && selectedTaskId === '__search__' ? ' selected' : '');
+        el.innerHTML =
+          '<div class="task-item-head">' +
+            '<div class="task-item-name">' + esc(doc.title) + '</div>' +
+            '<span class="task-item-badge">' + (doc.score ? doc.score.toFixed(2) : '') + '</span>' +
+          '</div>' +
+          '<div class="task-item-time">' + esc(doc.doc_id) + '</div>';
+        el.addEventListener('click', function () {
+          selectedTaskId = '__search__';
+          taskDocs = searchDocs;
+          showDoc(i);
+        });
+        $taskList.appendChild(el);
+      });
+      return;
+    }
+
+    var displayTasks = selectedTaskId ? tasks.filter(function (t) { return t.task_id === selectedTaskId; }) : tasks.slice();
+    if ($sortSelect.value === 'oldest') displayTasks.reverse();
+
+    $listCount.textContent = displayTasks.length;
+
+    if (displayTasks.length === 0) {
+      $emptyList.textContent = 'Task가 없습니다';
+      $emptyList.style.display = '';
+      $taskList.appendChild($emptyList);
+      return;
+    }
+    $emptyList.style.display = 'none';
+
+    displayTasks.forEach(function (t, i) {
+      var el = document.createElement('div');
+      el.className = 'task-item' + (selectedTaskId === t.task_id ? ' selected' : '');
+      el.dataset.taskId = t.task_id;
+      el.innerHTML =
+        '<div class="task-item-head">' +
+          '<div class="task-item-name">' + esc(t.task_id) + '</div>' +
+          '<span class="task-item-badge">' + t.doc_count + ' docs</span>' +
+        '</div>' +
+        '<div class="task-item-time">' + formatTime(t.first_at) + ' ~ ' + formatTime(t.last_at) + '</div>';
+      el.addEventListener('click', function () { selectTask(t.task_id); });
+      $taskList.appendChild(el);
+    });
+  }
+
+  $sortSelect.addEventListener('change', renderTaskList);
+
+  /* ── SELECT TASK ───────────────────────────────── */
+  async function selectTask(taskId) {
+    selectedTaskId = taskId;
+    selectedTaskIdx = tasks.findIndex(function (t) { return t.task_id === taskId; });
+    searchMode = false;
+    $searchInput.value = '';
+    renderTaskChips();
+    renderTaskList();
+
+    try {
+      var res = await fetch(API_TASK_DOCS + encodeURIComponent(taskId) + '/docs');
+      taskDocs = await res.json();
+      if (taskDocs.length > 0) {
+        showDoc(0);
+      } else {
+        hideDetail();
+      }
+    } catch (e) {
+      hideDetail();
+    }
+
+    $detailPane.classList.add('mobile-show');
+  }
+
+  /* ── SHOW DOCUMENT (캐러셀) ────────────────────── */
+  function showDoc(idx, direction) {
+    if (idx < 0 || idx >= taskDocs.length) return;
+    docIdx = idx;
+    var doc = taskDocs[idx];
+
+    $detailEmpty.style.display = 'none';
+    $scrollWrap.style.display = '';
+    $detailToolbar.style.display = '';
+    $pageDots.style.display = '';
+    $progressBar.style.display = '';
+
+    $renderTitle.textContent = doc.title;
+    var paras = doc.content.split('\n').filter(function (l) { return l.trim(); });
+    if (paras.length > 0 && paras[0].trim() === doc.title.trim()) paras.shift();
+    $renderBody.innerHTML = paras.map(function (p) { return '<p>' + esc(p) + '</p>'; }).join('');
+
+    $renderMeta.innerHTML =
+      '<span>ID: <b>' + esc(doc.doc_id) + '</b></span>' +
+      '<span>Task: <b>' + esc(doc.task_id || '') + '</b></span>' +
+      '<span>길이: <b>' + doc.char_count + '</b>자</span>' +
+      (doc.created_at ? '<span>저장: <b>' + formatTime(doc.created_at) + '</b></span>' : '');
+
+    var docRender = document.getElementById('docRender');
+    docRender.classList.remove('slide-left-enter', 'slide-right-enter');
+    if (direction === 'left')  { void docRender.offsetWidth; docRender.classList.add('slide-left-enter'); }
+    if (direction === 'right') { void docRender.offsetWidth; docRender.classList.add('slide-right-enter'); }
+
+    updateCarousel();
+    $detailScroll.scrollTop = 0;
+  }
+
+  function hideDetail() {
+    $detailEmpty.style.display = '';
+    $scrollWrap.style.display = 'none';
+    $detailToolbar.style.display = 'none';
+    $pageDots.style.display = 'none';
+    $progressBar.style.display = 'none';
+    taskDocs = [];
+    docIdx = 0;
+  }
+
+  function updateCarousel() {
+    $carouselPos.innerHTML = '<b>' + (docIdx + 1) + '</b> <span class="of">/ ' + taskDocs.length + '</span>';
+    var atStart = docIdx <= 0;
+    var atEnd = docIdx >= taskDocs.length - 1;
+    $prevDoc.disabled = atStart;
+    $nextDoc.disabled = atEnd;
+    $edgeLeft.disabled = atStart;
+    $edgeRight.disabled = atEnd;
+
+    var pct = taskDocs.length > 1 ? ((docIdx) / (taskDocs.length - 1)) * 100 : 100;
+    $progressFill.style.width = pct + '%';
+
+    $pageDots.innerHTML = '';
+    var maxDots = Math.min(taskDocs.length, 20);
+    for (var i = 0; i < maxDots; i++) {
+      var dot = document.createElement('span');
+      dot.className = 'page-dot' + (i === docIdx ? ' active' : '');
+      dot.dataset.idx = i;
+      dot.addEventListener('click', function () {
+        var target = parseInt(this.dataset.idx);
+        showDoc(target, target > docIdx ? 'left' : 'right');
+      });
+      $pageDots.appendChild(dot);
+    }
+  }
+
+  /* ── CAROUSEL NAV ──────────────────────────────── */
+  $prevDoc.addEventListener('click', function () { showDoc(docIdx - 1, 'right'); });
+  $nextDoc.addEventListener('click', function () { showDoc(docIdx + 1, 'left'); });
+  $edgeLeft.addEventListener('click', function () { showDoc(docIdx - 1, 'right'); });
+  $edgeRight.addEventListener('click', function () { showDoc(docIdx + 1, 'left'); });
+  $backBtn.addEventListener('click', function () { $detailPane.classList.remove('mobile-show'); });
+
+  /* ── MOUSE WHEEL ───────────────────────────────── */
+  var wheelCooldown = false;
+  $detailPane.addEventListener('wheel', function (e) {
+    if (taskDocs.length === 0) return;
+    var isContentScrollable = $detailScroll.scrollHeight > $detailScroll.clientHeight;
+    var atTop = $detailScroll.scrollTop <= 0;
+    var atBottom = $detailScroll.scrollTop + $detailScroll.clientHeight >= $detailScroll.scrollHeight - 2;
+    if (isContentScrollable && !atTop && !atBottom) return;
+    if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+      e.preventDefault();
+      if (wheelCooldown) return;
+      wheelCooldown = true;
+      setTimeout(function () { wheelCooldown = false; }, 300);
+      if (e.deltaX > 0) { showDoc(docIdx + 1, 'left'); flashHint('→'); }
+      else if (e.deltaX < 0) { showDoc(docIdx - 1, 'right'); flashHint('←'); }
+      return;
+    }
+    if (Math.abs(e.deltaY) < 30) return;
+    if ((e.deltaY > 0 && atBottom) || (e.deltaY < 0 && atTop)) {
+      e.preventDefault();
+      if (wheelCooldown) return;
+      wheelCooldown = true;
+      setTimeout(function () { wheelCooldown = false; }, 300);
+      if (e.deltaY > 0) { showDoc(docIdx + 1, 'left'); flashHint('→'); }
+      else { showDoc(docIdx - 1, 'right'); flashHint('←'); }
+    }
+  }, { passive: false });
+
+  function flashHint(arrow) {
+    $scrollHint.textContent = arrow;
+    $scrollHint.classList.add('flash');
+    setTimeout(function () { $scrollHint.classList.remove('flash'); }, 200);
+  }
+
+  /* ── TOUCH SWIPE ───────────────────────────────── */
+  var touchStartX = 0;
+  var touchStartY = 0;
+  var touchMoving = false;
+
+  $detailPane.addEventListener('touchstart', function (e) {
+    if (taskDocs.length === 0) return;
+    touchStartX = e.touches[0].clientX;
+    touchStartY = e.touches[0].clientY;
+    touchMoving = true;
+  }, { passive: true });
+
+  $detailPane.addEventListener('touchmove', function (e) {
+    if (!touchMoving) return;
+  }, { passive: true });
+
+  $detailPane.addEventListener('touchend', function (e) {
+    if (!touchMoving) return;
+    touchMoving = false;
+    var dx = e.changedTouches[0].clientX - touchStartX;
+    var dy = e.changedTouches[0].clientY - touchStartY;
+    if (Math.abs(dx) < 50 || Math.abs(dx) < Math.abs(dy)) return;
+    if (dx < 0) showDoc(docIdx + 1, 'left');
+    else showDoc(docIdx - 1, 'right');
+  }, { passive: true });
+
+  /* ── SHORTCUT HELP ─────────────────────────────── */
+  $helpBtn.addEventListener('click', toggleHelp);
+  $shortcutOvl.addEventListener('click', function (e) {
+    if (e.target === $shortcutOvl) toggleHelp();
+  });
+
+  function toggleHelp() {
+    $shortcutOvl.classList.toggle('show');
+  }
+
+  /* ── SEARCH ────────────────────────────────────── */
+  var searchTimer = null;
+
+  async function doSearch() {
+    var q = $searchInput.value.trim();
+    if (!q) {
+      searchMode = false;
+      searchDocs = [];
+      renderTaskChips();
+      renderTaskList();
+      return;
+    }
+    try {
+      var res = await fetch(API_SEARCH, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: q, limit: 20 }),
+      });
+      var data = await res.json();
+      searchMode = true;
+      searchDocs = (data.sources && data.sources.length > 0) ? data.sources : [];
+      if (searchDocs.length === 0 && Array.isArray(data) && data.length > 0) searchDocs = data;
+      renderTaskChips();
+      renderTaskList();
+    } catch (e) {
+      searchMode = true;
+      searchDocs = [];
+      renderTaskList();
+    }
+  }
+
+  $searchInput.addEventListener('input', function () {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(doSearch, 300);
+  });
+  $searchInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { clearTimeout(searchTimer); doSearch(); }
+    if (e.key === 'Escape') { $searchInput.value = ''; searchMode = false; searchDocs = []; renderTaskChips(); renderTaskList(); $searchInput.blur(); }
+  });
+
+  /* ── THEME & FONT ──────────────────────────────── */
+  $themeToggle.addEventListener('click', function () {
+    themeIdx = (themeIdx + 1) % themes.length;
+    $renderCard.className = 'doc-render-card ' + themes[themeIdx] + ' ' + fonts[fontIdx];
+  });
+  $fontToggle.addEventListener('click', function () {
+    fontIdx = (fontIdx + 1) % fonts.length;
+    $renderCard.className = 'doc-render-card ' + themes[themeIdx] + ' ' + fonts[fontIdx];
+    var textNodes = $fontToggle.childNodes;
+    for (var i = 0; i < textNodes.length; i++) {
+      if (textNodes[i].nodeType === 3 && textNodes[i].textContent.trim()) {
+        textNodes[i].textContent = ' ' + fontLabels[fontIdx];
+        break;
+      }
+    }
+  });
+
+  /* ── KEYBOARD ──────────────────────────────────── */
+  document.addEventListener('keydown', function (e) {
+    // 도움말이 열려있으면 아무 키로 닫기
+    if ($shortcutOvl.classList.contains('show')) {
+      $shortcutOvl.classList.remove('show');
+      e.preventDefault();
+      return;
+    }
+
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') {
+      if (e.key === 'Escape') e.target.blur();
+      return;
+    }
+
+    if (e.key === '?') { e.preventDefault(); toggleHelp(); return; }
+    if (e.key === '/') { e.preventDefault(); $searchInput.focus(); return; }
+
+    // 문서 탐색
+    if (e.key === 'ArrowLeft') { e.preventDefault(); showDoc(docIdx - 1, 'right'); }
+    if (e.key === 'ArrowRight') { e.preventDefault(); showDoc(docIdx + 1, 'left'); }
+    if (e.key === 'Home') { e.preventDefault(); showDoc(0, 'right'); }
+    if (e.key === 'End') { e.preventDefault(); showDoc(taskDocs.length - 1, 'left'); }
+
+    // Task 탐색
+    if (e.key === 'ArrowDown' || e.key === 'j') {
+      e.preventDefault();
+      if (!searchMode && tasks.length > 0) {
+        if (selectedTaskIdx < 0) { selectTask(tasks[0].task_id); }
+        else {
+          var nextIdx = selectedTaskIdx + 1;
+          if (nextIdx < tasks.length) selectTask(tasks[nextIdx].task_id);
+        }
+      }
+    }
+    if (e.key === 'ArrowUp' || e.key === 'k') {
+      e.preventDefault();
+      if (!searchMode && tasks.length > 0) {
+        if (selectedTaskIdx < 0) { selectTask(tasks[tasks.length - 1].task_id); }
+        else {
+          var prevIdx = selectedTaskIdx - 1;
+          if (prevIdx >= 0) selectTask(tasks[prevIdx].task_id);
+        }
+      }
+    }
+
+    // 테마/서체 토글
+    if (e.key === 't') { $themeToggle.click(); }
+    if (e.key === 'f') { $fontToggle.click(); }
+
+    if (e.key === 'Escape') { $detailPane.classList.remove('mobile-show'); }
+  });
+
+  /* ── WEBSOCKET ─────────────────────────────────── */
+  function connectWs() {
+    var proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    ws = new WebSocket(proto + '://' + location.host + WS_PATH);
+
+    ws.onopen = function () {
+      $wsDot.classList.add('connected');
+      $wsDot.title = 'WebSocket 연결됨';
+    };
+
+    ws.onmessage = function (e) {
+      var msg = JSON.parse(e.data);
+      if (msg.type === 'new_document') {
+        var d = msg.data;
+        showToast('새 문서: ' + d.title + ' [' + (d.task_id || 'default') + ']');
+        loadTasks();
+      }
+      if (msg.type === 'stats') {
+        $totalCount.textContent = msg.data.total;
+      }
+    };
+
+    ws.onclose = function () {
+      $wsDot.classList.remove('connected');
+      $wsDot.title = 'WebSocket 끊김';
+      setTimeout(connectWs, 2000);
+    };
+
+    ws.onerror = function () { ws.close(); };
+  }
+
+  /* ── TOAST ─────────────────────────────────────── */
+  function showToast(text) {
+    var el = document.createElement('div');
+    el.className = 'toast';
+    el.textContent = text;
+    $toastCont.appendChild(el);
+    setTimeout(function () { el.remove(); }, 3000);
+  }
+
+  /* ── UTIL ──────────────────────────────────────── */
+  function esc(s) {
+    if (!s) return '';
+    var d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+  }
+
+  function formatTime(ts) {
+    if (!ts) return '';
+    var d = new Date(ts);
+    if (isNaN(d.getTime())) return ts;
+    var pad = function (n) { return n < 10 ? '0' + n : n; };
+    return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  }
+
+  /* ── BOOT ──────────────────────────────────────── */
+  loadTasks();
+  connectWs();
+})();
+</script>
+</body>
+</html>

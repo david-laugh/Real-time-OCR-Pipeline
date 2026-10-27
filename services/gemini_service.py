@@ -17,8 +17,6 @@ import os
 from functools import lru_cache
 from typing import List, Optional
 
-from google import genai
-from google.genai import errors, types
 
 EMBEDDING_MODEL = os.getenv("GEMINI_EMBEDDING_MODEL", "gemini-embedding-001")
 EMBEDDING_DIM = int(os.getenv("GEMINI_EMBEDDING_DIM", "768"))
@@ -28,6 +26,8 @@ CHAT_FALLBACK_MODEL = os.getenv("GEMINI_CHAT_FALLBACK_MODEL", "gemini-3.5-flash"
 
 @lru_cache(maxsize=1)
 def get_client() -> genai.Client:
+    from google import genai
+
     # import 시점이 아니라 첫 호출 때 만든다 (키 없이도 서버는 뜨도록)
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
@@ -37,6 +37,8 @@ def get_client() -> genai.Client:
 
 def embed_text(text: str, task_type: str = "RETRIEVAL_DOCUMENT") -> List[float]:
     # 문서 저장은 RETRIEVAL_DOCUMENT, 검색 질문은 RETRIEVAL_QUERY
+    from google.genai import types
+
     response = get_client().models.embed_content(
         model=EMBEDDING_MODEL,
         contents=text,
@@ -55,6 +57,8 @@ def generate_text(
     system_instruction: Optional[str] = None,
     model: Optional[str] = None,
 ) -> str:
+    from google.genai import types
+
     response = get_client().models.generate_content(
         model=model or CHAT_MODEL,
         contents=prompt,
@@ -67,9 +71,13 @@ def generate_text(
 
 def is_rate_limit_error(exc: BaseException) -> bool:
     """사용량 한도 초과(429 RESOURCE_EXHAUSTED) 여부."""
+    from google.genai import errors
+
     return isinstance(exc, errors.APIError) and exc.code == 429
 
 
 def is_unavailable_error(exc: BaseException) -> bool:
     """모델 과부하 등 일시적 사용 불가(503 UNAVAILABLE) 여부."""
+    from google.genai import errors
+
     return isinstance(exc, errors.APIError) and exc.code == 503

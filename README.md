@@ -68,7 +68,7 @@ docker run -d --name ocr-mqtt -p 1883:1883 eclipse-mosquitto:2 mosquitto -c /mos
 ## 2. 서버 실행
 
 ```powershell
-uvicorn main:app --host 0.0.0.0 --port 8000 --env-file .env
+python run.py
 ```
 
 ## 3. 테스트
@@ -118,7 +118,19 @@ cloudflared tunnel --url http://localhost:8000
 ```
 
 `document_id`, `created_at`은 `stored`에만 있다. 본문 전체와 embedding은 Supabase에서 조회한다.
-브라우저 대시보드는 일반 MQTT(1883)에 직접 붙을 수 없으므로 broker의 WebSocket 포트(예: 9001)와 mqtt.js를 사용한다.
+통합 대시보드는 `/ws/dashboard`로 서버에 연결한다. 브라우저용 MQTT 포트는 별도로 필요하지 않다.
+
+### MQTT 본문 및 대시보드 통합
+
+Supabase 저장 성공 후 `ocr/text`에 `{"text":"전체 본문","task_id":"session_id"}`를 추가 발행한다. 서버의 MQTT 수신부가 SQLite에 저장하고 대시보드로 알린다. `MQTT_TOPIC`으로 본문 토픽을 변경할 수 있으며 `MQTT_TLS=1`은 발행·구독 모두에 적용된다.
+
+- `/`: 대시보드, `/viewer`: 문서 검색/뷰어
+- 기존 `/camera`, `/frame`, `/pair`, `/session/{session_id}/status` 유지
+- `.env.example`을 참고해 `.env`에 Gemini/Supabase/MQTT 설정 입력
+- Windows에서는 `python run.py`로 단일 worker 실행
+- Supabase와 SQLite는 별도 저장소이며, MQTT 재전송 중복 방지와 두 저장소 간 자동 복구는 아직 없다.
+
+병합 검토 및 테스트 범위는 [RELEASE_MERGE.md](docs/RELEASE_MERGE.md)를 참고한다.
 
 ## 5. 파일 구성
 

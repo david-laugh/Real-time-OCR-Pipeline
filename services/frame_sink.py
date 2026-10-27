@@ -119,6 +119,10 @@ class OcrSink:
             self._last_text[session_id] = text
             document_id = str(row.get("id", ""))
             logger.info("ocr document stored (session=%s, id=%s)", session_id, document_id)
+            try:
+                mqtt_service.publish_document(session_id, text)
+            except Exception:
+                logger.exception("ocr document publish failed (session=%s)", session_id)
             await self._notify(
                 session_id, "stored", title=title, text=text,
                 document_id=document_id, created_at=row.get("created_at"),
