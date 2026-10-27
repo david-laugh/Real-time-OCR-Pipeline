@@ -22,7 +22,8 @@
 - [x] camera.css/js에 캐시 방지 버전 쿼리(`?v=`) 추가
 - [x] push, release 대상 PR 본문 작성
 - [x] Android Chrome 실기기 테스트 통과(촬영, 전송, 가로/세로, 권한 거부, 다시 시도) — 2026-10-27
-- [ ] **release 대상 PR 생성 → 팀 리뷰/머지** ← 다음 할 일
+- [x] release 대상 PR 생성: https://github.com/david-laugh/Real-time-OCR-Pipeline/pull/1
+- [ ] **팀 리뷰 → 머지** ← 다음 할 일
 - [ ] 체크리스트의 미확인 항목(아래)은 여유 있을 때 확인
 
 ## 결정사항
