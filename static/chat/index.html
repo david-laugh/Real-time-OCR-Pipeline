@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>문서 질문</title>
+  <!--
+    Standalone test page for <rag-chat>.
+    Query options:
+      ?session=<id>        start with this session ID ("seed" selects the seed option)
+      ?api-base=<origin>   search API server (default: this page's origin)
+  -->
+  <style>
+    :root {
+      --bg: #f6f8fa;
+      --fg: #1f2328;
+      --muted: #656d76;
+      --border: #d0d7de;
+      --error: #cf222e;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #111418; --fg: #f1f3f5; --muted: #9aa3ad; --border: #3a414c; --error: #ff8182; }
+    }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--fg);
+      font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+    }
+    main {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 24px 16px;
+      display: grid;
+      gap: 16px;
+    }
+    h1 { margin: 0; font-size: 20px; }
+    fieldset {
+      margin: 0;
+      padding: 10px 14px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px 16px;
+      font-size: 14px;
+    }
+    legend { padding: 0 4px; color: var(--muted); font-size: 13px; }
+    label { display: inline-flex; align-items: center; gap: 4px; }
+    input[type="text"] {
+      width: 14em;
+      max-width: 100%;
+      padding: 5px 8px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: transparent;
+      color: inherit;
+      font: inherit;
+    }
+    input[type="text"]:disabled { opacity: 0.5; }
+    .hint { width: 100%; margin: 0; font-size: 12px; color: var(--muted); }
+    .hint.error { color: var(--error); }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>문서 질문 (RAG 테스트)</h1>
+    <fieldset id="scope">
+      <legend>검색 범위</legend>
+      <label><input type="radio" name="scope" value="all" checked> 전체</label>
+      <label><input type="radio" name="scope" value="seed"> seed (컨베이어 시드 100개)</label>
+      <label><input type="radio" name="scope" value="custom"> 세션 ID</label>
+      <input type="text" id="custom-id" placeholder="예: 7ebv5xsn" maxlength="64" disabled
+             autocomplete="off" spellcheck="false" aria-label="세션 ID">
+      <p class="hint" id="hint">전체 세션의 문서에서 찾습니다</p>
+    </fieldset>
+    <rag-chat id="chat"></rag-chat>
+  </main>
+
+  <script>
+    // Wire the scope selector to the widget's session-id attribute
+    (function () {
+      var SESSION_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;   // Same rule as the server
+      var params = new URLSearchParams(location.search);
+      var chat = document.getElementById("chat");
+      var customInput = document.getElementById("custom-id");
+      var hint = document.getElementById("hint");
+      if (params.get("api-base")) chat.setAttribute("api-base", params.get("api-base"));
+
+      function selected() {
+        return document.querySelector('input[name="scope"]:checked').value;
+      }
+
+      function apply() {
+        var scope = selected();
+        customInput.disabled = scope !== "custom";
+        hint.classList.remove("error");
+        if (scope === "all") {
+          chat.removeAttribute("session-id");
+          hint.textContent = "전체 세션의 문서에서 찾습니다";
+        } else if (scope === "seed") {
+          chat.setAttribute("session-id", "seed");
+          hint.textContent = "컨베이어 시드 문서(session_id=seed)에서만 찾습니다";
+        } else {
+          var id = customInput.value.trim();
+          if (!id) {
+            chat.removeAttribute("session-id");
+            hint.textContent = "세션 ID를 입력하세요. 입력 전에는 전체에서 찾습니다";
+          } else if (!SESSION_ID_RE.test(id)) {
+            // Keep the invalid ID so the server's 400 message shows in the chat (no silent fallback to all)
+            chat.setAttribute("session-id", id);
+            hint.textContent = "영문, 숫자, -, _ 만 쓸 수 있어요 (최대 64자)";
+            hint.classList.add("error");
+          } else {
+            chat.setAttribute("session-id", id);
+            hint.textContent = "세션 " + id + "의 문서에서만 찾습니다";
+          }
+        }
+      }
+
+      var initial = (params.get("session") || "").trim();
+      if (initial === "seed") {
+        document.querySelector('input[value="seed"]').checked = true;
+      } else if (initial) {
+        document.querySelector('input[value="custom"]').checked = true;
+        customInput.value = initial;
+      }
+
+      document.getElementById("scope").addEventListener("change", apply);
+      customInput.addEventListener("input", apply);
+      apply();
+    })();
+  </script>
+  <script src="/static/chat/rag-chat.js?v=2026-10-27.1" defer></script>
+</body>
+</html>

@@ -1,4 +1,5 @@
 """POST /api/search: RAG question answering over stored OCR documents (pec response format).
+GET /chat: standalone page that shows only the <rag-chat> widget (for testing).
 
 Success: 200 {answer, sources:[{doc_id, title, preview, score}]}
 Errors keep the same shape so the pec dashboard can always read data.answer:
@@ -8,11 +9,12 @@ Errors keep the same shape so the pec dashboard can always read data.answer:
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any, Callable, Optional
 
 from fastapi import APIRouter, Request, Response
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, Field
 
@@ -20,6 +22,8 @@ from api.frame import SESSION_ID_RE
 from services import rag_service
 
 logger = logging.getLogger(__name__)
+
+CHAT_HTML = Path(__file__).resolve().parent.parent / "static" / "chat" / "index.html"
 
 # (HTTP status, error code, message shown in the chat)
 INVALID_REQUEST = (400, "invalid_request", "질문 형식이 올바르지 않아요. 질문과 세션 ID를 확인해 주세요")
@@ -73,3 +77,8 @@ async def search_documents(body: SearchInput) -> Any:
     except Exception:
         logger.exception("rag search failed")
         return error_response(SEARCH_FAILED)
+
+
+@router.get("/chat", include_in_schema=False)
+async def chat_page() -> FileResponse:
+    return FileResponse(CHAT_HTML, headers={"Cache-Control": "no-cache"})

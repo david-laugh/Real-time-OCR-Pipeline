@@ -84,6 +84,11 @@ class SearchApiFormatTest(unittest.TestCase):
                 self.assertLogs("api.search", "ERROR"):
             self.assert_error(self.post({"query": "q"}), 502, "search_failed")
 
+    def test_chat_page(self) -> None:
+        res = self.client.get("/chat")
+        self.assertEqual(res.status_code, 200)
+        self.assertIn("<rag-chat", res.text)
+
     def test_other_routes_keep_default_validation(self) -> None:
         # SearchRoute must not change other routers (e.g. /frame still returns 422 {detail})
         res = self.client.post("/frame", data={})

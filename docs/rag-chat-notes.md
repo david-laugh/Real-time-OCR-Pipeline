@@ -18,10 +18,10 @@ Supabase `ocr_documents`에 쌓인 OCR 텍스트를 근거로 질문에 답하�
 - [x] `gemini_service.py`/`db/supabase.py` 최소 수정 (import·시그니처 확인, 실제 API 호출은 `.env` 준비 후)
 - [x] 서버: `services/rag_service.py`, `api/search.py`, `main.py` (실데이터로 `/api/search` 전체 응답 확인)
 - [x] 시드 스크립트 `scripts/seed_conveyor.py` → `session_id='seed'` 100행 저장 (2026-10-27)
-- [ ] **`<rag-chat>` 조각** ← 다음 할 일, `static/chat/rag-chat.js`
-- [ ] `/chat` 단독 페이지 `static/chat/index.html`
+- [x] `<rag-chat>` 조각 `static/chat/rag-chat.js`
+- [x] `/chat` 단독 페이지 `static/chat/index.html` (검색 범위: 전체 / seed / 세션 ID 직접 입력)
 - [ ] **데모 전: seed 삭제 또는 대시보드 검색 범위를 session-id로 제한** (seed 100행이 실데이터 검색에 섞임)
-- [ ] 로컬 확인 → push, PR(→ release)
+- [ ] **로컬 확인 → push, PR(→ release)** ← 다음 할 일
 
 ## 흐름
 ```
@@ -53,6 +53,9 @@ Supabase `ocr_documents`에 쌓인 OCR 텍스트를 근거로 질문에 답하�
 | 시드 재실행 | 전부 임베딩한 뒤 `session_id='seed'` 행을 지우고 새로 저장 | 중복 방지. 임베딩 도중 실패해도 기존 seed는 남음 |
 | 시드 실행 | `python -m scripts.seed_conveyor <html> [--dry-run] [--limit N]`, `.env`는 python-dotenv로 읽음. 임베딩 429면 30초 쉬고 최대 4회 재시도 | `--limit`도 기존 seed 전체를 지우므로 주의 |
 | 형태 | 커스텀 태그 `<rag-chat>` + Shadow DOM, 스크립트 1개 | `<qr-pairing>`과 같은 방식 |
+| 조각 동작 | Enter 전송(한글 IME 조합 중 Enter 무시), Shift+Enter 줄바꿈, 응답 중 입력 잠금, 30초 시간 초과. 출처는 `[n]`으로 번호를 붙여 답변의 인용 번호와 맞춤. 서버 문자열은 `textContent`로만 넣음 | |
+| 조각 오류 표시 | 서버 오류는 `answer` 문구를 빨간 말풍선으로. 클라이언트 오류 `network`(연결 실패), `timeout`, `bad_response`(JSON 아님·`answer` 없음, 예: 다른 서버의 404) | |
+| `/chat` 검색 범위 | 라디오 전체 / seed / 세션 ID. 잘못된 세션 ID는 전체로 바꾸지 않고 그대로 보내 400 안내 문구가 채팅에 뜨게 함. `?session=<id>`, `?api-base=` 지원 | 조용히 전체 검색으로 바뀌면 혼동 |
 | main.py | `3번 (대시보드/RAG):` 주석 아래 라우터 등록 + import 줄에 추가 | |
 | CORS | 수정 안 함 | `/chat`은 같은 origin. github.io 대시보드에서 부를 경우 지금 설정(POST 허용)으로 가능 |
 
@@ -90,7 +93,7 @@ $$;
 | `SUPABASE_OCR_TABLE` | | 기본 `ocr_documents` |
 - 코드에서 `.env`를 직접 읽지 않음 → `uvicorn main:app --env-file .env`로 실행 (`uvicorn[standard]`에 python-dotenv 포함)
 
-## 파일 (예정)
+## 파일
 ```
 services/gemini_service.py   embed_text(task_type=...), generate_text() 추가
 db/supabase.py               match_ocr_documents() RPC 호출 추가
@@ -108,6 +111,25 @@ scripts/seed_conveyor.py     컨베이어 HTML 경로를 인자로 받아 seed �
 - `C:\Users\1\Downloads\ocr-conveyor-test.html` (저장소에 넣지 않음, 경로를 인자로 전달)
 - `PASSAGES` 100개, 영어 문단. title → `title`, body 문단들을 줄바꿈으로 이어 → `text` (제목은 text에 넣지 않음)
 - JS 문자열은 큰따옴표 + `\"` 이스케이프뿐 → JSON 디코딩으로 처리
+
+## 대시보드에 붙이는 방법
+```html
+<script src="/static/chat/rag-chat.js" defer></script>
+<rag-chat></rag-chat>                          <!-- 전체 세션 검색 -->
+<rag-chat session-id="ab23cd45"></rag-chat>    <!-- 한 세션만 -->
+<script>
+  const chat = document.querySelector("rag-chat");
+  // <qr-pairing>과 함께 쓸 때: 현재 세션으로 범위 제한
+  document.querySelector("qr-pairing")?.addEventListener("session-change", (e) => {
+    chat.setAttribute("session-id", e.detail.sessionId);
+  });
+  chat.addEventListener("answer", (e) => { /* e.detail: {query, sessionId, answer, sources, error} */ });
+</script>
+```
+- 속성: `api-base`(기본 현재 origin), `session-id`(비우면 전체), `limit`(1~20, 기본 5)
+- 속성/메서드: `chat.sessionId`, `chat.ask(질문)`, `chat.clear()`
+- 스타일은 Shadow DOM 안. 높이 `--rag-chat-height`(기본 520px) 등 CSS 변수로 조정
+- 다른 origin(github.io 등)에서 쓰면 `api-base`에 터널 주소. CORS는 POST 허용 상태라 그대로 동작해야 함(미확인)
 
 ## 테스트 기록
 - 2026-10-27, RPC 확인 쿼리(사용자 실행): similarity 첫 행 1, 다음 0.907, 0.900 — 정상
@@ -138,6 +160,14 @@ READING IN TRANSLATION...`으로 시작
   - `session_id='seed'` 검색: "케틀은 몇 도에서 자동으로 꺼져?" → 100 °C, 1위 Instructions for the New Kettle(0.68) / "종이가 사마르칸트에 도착한 해는?" → 751년, 1위 A Short History of Paper(0.73)
   - 전체 검색에 seed가 섞여도 실데이터 번역 질문 1위는 `ON READING IN TRANSLATION` 유지
 - 2026-10-27, `tests/test_search_api.py` 13개 통과: 성공 응답 그대로 전달 / 400(session_id, limit 0, query 없음·1001자, JSON 아님) / 429 / 503 / 502 모두 `{answer, sources:[], error}` 형식이고 원본 오류 없음 / `/frame`은 기본 422 유지 / 중복 제거·제목 대체·품질 필터·예비 모델 재시도·503 분류
+- 2026-10-27, `/chat` (Chrome, 로컬 서버):
+  - `?session=seed` → seed 선택, "검색 범위: 세션 seed". 질문 입력 + Enter → "케틀은 100 °C에서 자동으로 꺼집니다 [1]", 출처 `[1] Instructions for the New Kettle 0.68`
+  - 세션 ID `bad id!` → 힌트 빨간색, 헤더 "잘못된 세션 ID", 전송 시 400 → "질문 형식이 올바르지 않아요…" 빨간 말풍선, `answer` 이벤트 `error: invalid_request`
+  - 전체 → `session-id` 속성 제거, 번역 질문 답변 + 출처 5개, 이벤트 `error: null`
+  - 연결 안 되는 주소(`api-base=http://127.0.0.1:8999`) → "서버에 연결할 수 없어요…"
+  - 다른 서버(404 `{detail}`) 응답 → `bad_response` 문구
+  - 콘솔 오류는 favicon 404와 의도한 400뿐
+  - `tests/test_search_api.py`에 `/chat` 200 확인 추가 (14개 통과)
 - 서버 기동: `easyocr` 미설치 시 `api/frame` → `frame_sink` → `ocr_service`의 `import easyocr`에서 기동 실패 확인 → `requirements.txt` 전체 설치 후 정상
 
 ## 남은 일 / 이슈
@@ -148,3 +178,5 @@ READING IN TRANSLATION...`으로 시작
 - `gemini-2.5-flash` 일시 503(high demand) 경험 → 503은 재시도하지 않고 502로 응답
 - 실데이터 출처 잡음: 짧은·숫자 위주 조각은 품질 필터로 제외. 제목이 파일 경로(`D/007_Workspace/...`)인 행은 본문이 정상이라 남음 → 2번 OCR 쪽 제목 추출 문제
 - 대시보드 담당자에게 `<rag-chat>` 붙이는 방법 공유
+- 로컬 PC에 이번 세션 전부터 다른 Python 서버(PID 2544, 14:12 시작)가 `0.0.0.0:8000`을 쓰고 있음. uvicorn 기본(`127.0.0.1:8000`)과 같이 떠서 `localhost:8000`이 어느 쪽으로 갈지 헷갈릴 수 있음 → 테스트 전 확인하거나 다른 포트 사용
+- 실기기·터널 경유 `/chat`, github.io origin에서의 호출은 아직 확인 안 함
