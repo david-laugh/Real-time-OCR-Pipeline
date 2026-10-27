@@ -61,7 +61,8 @@ async def broadcast(payload: dict):
         except Exception:
             dead.append(ws)
     for ws in dead:
-        _dashboard_clients.remove(ws)
+        if ws in _dashboard_clients:
+            _dashboard_clients.remove(ws)
 
 
 @router.get("/api/tasks")

@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 import sys
+import ssl
 
 import aiomqtt
 from pydantic import ValidationError
@@ -32,6 +33,7 @@ class MqttHandler:
         topic: str = TOPIC,
         username: str | None = None,
         password: str | None = None,
+        tls: bool = False,
     ):
         self._pipeline = pipeline
         self._broadcast = broadcast
@@ -40,6 +42,7 @@ class MqttHandler:
         self._topic = topic
         self._username = username
         self._password = password
+        self._tls_context = ssl.create_default_context() if tls else None
         self._task: asyncio.Task | None = None
 
     async def start(self):
@@ -66,6 +69,7 @@ class MqttHandler:
                 async with aiomqtt.Client(
                     self._host, self._port, username=self._username, password=self._password,
                     protocol=aiomqtt.ProtocolVersion.V311,
+                    tls_context=self._tls_context,
                 ) as client:
                     await client.subscribe(self._topic, qos=1)
                     logger.info("MQTT connected, subscribed to %s", self._topic)

@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#111418">
+  <title>카메라 촬영</title>
+  <!-- Bump ?v= on both links whenever camera.css or camera.js changes (cache busting) -->
+  <link rel="stylesheet" href="/static/camera/camera.css?v=2026-10-27.1">
+</head>
+<body>
+  <div class="app">
+    <section class="preview">
+      <video id="video" playsinline muted autoplay></video>
+      <p id="placeholder" class="placeholder">시작 버튼을 누르면 카메라가 켜져요</p>
+      <p class="landscape-hint">세로로 들면 더 잘 인식돼요</p>
+      <pre id="debug" class="debug" hidden></pre>
+    </section>
+
+    <section class="panel">
+      <header class="panel-head">
+        <span id="status" class="status" data-state="idle">대기</span>
+        <span id="session" class="session"></span>
+      </header>
+
+      <div id="inapp" class="notice" hidden>
+        <p><strong>앱 안의 브라우저에서 열렸어요.</strong><br>
+          카메라가 동작하지 않을 수 있어요. 메뉴(⋮ 또는 공유 버튼)에서
+          <b>Safari로 열기</b> / <b>다른 브라우저로 열기</b>를 선택하거나,
+          주소를 복사해 Safari·Chrome에 붙여넣어 주세요.</p>
+        <button id="copy-url" type="button" class="btn btn-small">주소 복사</button>
+      </div>
+
+      <div id="error" class="notice notice-error" hidden>
+        <p id="error-title" class="notice-title"></p>
+        <p id="error-message"></p>
+        <ol id="error-steps"></ol>
+        <button id="retry" type="button" class="btn btn-small">다시 시도</button>
+      </div>
+
+      <div class="controls">
+        <button id="start" type="button" class="btn btn-primary">시작</button>
+        <button id="stop" type="button" class="btn" disabled>정지</button>
+      </div>
+
+      <p id="stats" class="stats"></p>
+    </section>
+  </div>
+
+  <script src="/static/camera/camera.js?v=2026-10-27.1"></script>
+</body>
+</html>

@@ -1,78 +1,66 @@
-"""
-============================================================
-[FILE] main.py
-[역할] FastAPI 앱 진입점 — 서버 기동, 모듈 초기화, 라우터 등록
-[실행] python run.py
-============================================================
-"""
-
+"""Camera, QR pairing, OCR and MQTT dashboard application."""
 import logging
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
-from fastapi import FastAPI
 from dotenv import load_dotenv
-
-load_dotenv()
-logging.basicConfig(level=logging.INFO)
-from fastapi.staticfiles import StaticFiles
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
+BASE_DIR = Path(__file__).resolve().parent
+load_dotenv(BASE_DIR / ".env")
+logging.basicConfig(level=logging.INFO)
+
+from api import camera, frame, pair, routes, session
 from db.meta_store import MetaStore
+from services import mqtt_service
 from services.dedup import DedupFilter
+from services.frame_queue import get_frame_queue
+from services.mqtt_handler import MqttHandler
 from services.pipeline import Pipeline
 from services.search import SearchService
-from api.routes import router, init as init_routes, broadcast
-from services.mqtt_handler import MqttHandler
-
-# ── [APP] ────────────────────────────────────────────
-app = FastAPI(title="OCR Pipeline Dashboard")
-
-# ── [INIT] 모듈 초기화 ──────────────────────────────
-meta_store = MetaStore(path="./data/documents.db")
-dedup = DedupFilter(threshold=0.85, buffer_size=5, min_length=20, enabled=False)
-pipeline = Pipeline(meta_store=meta_store, dedup=dedup)
-search_service = SearchService(meta_store=meta_store)
-
-init_routes(pipeline, search_service, meta_store)
-
-mqtt = MqttHandler(
-    pipeline=pipeline,
-    broadcast=broadcast,
-    host=os.getenv("MQTT_HOST", "localhost"),
-    port=int(os.getenv("MQTT_PORT", "1883")),
-    topic=os.getenv("MQTT_TOPIC", "ocr/text"),
-    username=os.getenv("MQTT_USERNAME") or None,
-    password=os.getenv("MQTT_PASSWORD") or None,
-)
-
-# ── [ROUTES] ─────────────────────────────────────────
-app.include_router(router)
-
-# ── [STATIC] 정적 파일 서빙 ─────────────────────────
-static_dir = Path(__file__).parent / "static"
-app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
 
-@app.get("/")
-async def index():
-    """대시보드 페이지"""
-    return FileResponse(static_dir / "dashboard.html")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    store = MetaStore(str(BASE_DIR / "data" / "documents.db"))
+    pipeline = Pipeline(store, DedupFilter(enabled=False))
+    routes.init(pipeline, SearchService(store), store)
+    listener = MqttHandler(
+        pipeline, routes.broadcast,
+        host=os.getenv("MQTT_HOST", "localhost"),
+        port=int(os.getenv("MQTT_PORT", "1883")),
+        topic=os.getenv("MQTT_TOPIC", "ocr/text"),
+        username=os.getenv("MQTT_USERNAME") or None,
+        password=os.getenv("MQTT_PASSWORD") or None,
+        tls=os.getenv("MQTT_TLS") == "1",
+    )
+    try:
+        await listener.start()
+        yield
+    finally:
+        await get_frame_queue().stop()
+        mqtt_service.close()
+        await listener.stop()
+        store.close()
 
 
-@app.get("/viewer")
+app = FastAPI(title="Real-time OCR Pipeline", lifespan=lifespan)
+app.add_middleware(CORSMiddleware,
+    allow_origins=["https://david-laugh.github.io"],
+    allow_methods=["POST"], allow_headers=["*"])
+for router in (camera.router, frame.router, session.router, pair.router, routes.router):
+    app.include_router(router)
+app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
+
+
+@app.get("/", include_in_schema=False)
+async def dashboard():
+    return FileResponse(BASE_DIR / "static" / "dashboard.html")
+
+
+@app.get("/viewer", include_in_schema=False)
 async def viewer():
-    """문서 뷰어 페이지 — 카드형 탐색 + 검색 + 상세 보기"""
-    return FileResponse(static_dir / "viewer.html")
-
-
-
-# ── [LIFECYCLE] ──────────────────────────────────────
-@app.on_event("startup")
-async def startup():
-    await mqtt.start()
-
-
-@app.on_event("shutdown")
-async def shutdown():
-    await mqtt.stop()
-    meta_store.close()
+    return FileResponse(BASE_DIR / "static" / "viewer.html")

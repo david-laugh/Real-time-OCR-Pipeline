@@ -4,7 +4,7 @@
 
 ## 개발자에게 전달할 핵심
 
-OCR 완료 텍스트를 UTF-8 JSON으로 `ocr/text` 토픽에 발행한다. `text`는 필수 문자열, `task_id`는 선택 문자열이며 생략하면 `default`로 저장된다. 같은 작업의 페이지를 같은 `task_id`로 묶고 메시지 하나를 문서 하나로 보낸다. 발행은 QoS 1, retain=false를 사용한다. 수신 서버는 SQLite 저장 후 대시보드 WebSocket으로 알린다. MQTT 저장 완료 응답 토픽과 재전송 중복 방지는 현재 없다. 이미지, 좌표, 신뢰도, OCR 엔진 실행은 이 서버의 입력 범위에 포함되지 않는다.
+OCR 완료 텍스트를 UTF-8 JSON으로 `ocr/text` 토픽에 발행한다. `text`는 필수 문자열, `task_id`는 선택 문자열이며 생략하면 `default`로 저장된다. 같은 작업의 페이지를 같은 `task_id`로 묶고 메시지 하나를 문서 하나로 보낸다. 발행은 QoS 1, retain=false를 사용한다. 수신 서버는 SQLite 저장 후 대시보드 WebSocket으로 알린다. MQTT 저장 완료 응답 토픽과 재전송 중복 방지는 현재 없다. 이미지, 좌표, 신뢰도는 MQTT 본문 입력 범위에 포함되지 않는다. 카메라 이미지는 별도 /frame HTTP API로 받는다.
 
 ## 폴더와 처리 흐름
 
@@ -20,7 +20,7 @@ OCR 완료 텍스트를 UTF-8 JSON으로 `ocr/text` 토픽에 발행한다. `tex
 | `api/routes.py` | HTTP 입력, 문서·작업 조회, 검색, WebSocket |
 | `static/` | dashboard.html, viewer.html, 기존 report.html |
 
-외부 OCR 발행자 → MQTT 브로커 → 구독 서버 → 검증 → Pipeline → SQLite → WebSocket 순서다. 이 프로젝트에는 이미지에서 글자를 인식하는 OCR 엔진이 없다. 기존 `static/report.html`은 이전 HTTP 중심 보고서이므로 MQTT 연동은 이 문서를 기준으로 한다.
+외부 OCR 발행자 → MQTT 브로커 → 구독 서버 → 검증 → Pipeline → SQLite → WebSocket 순서다. release 통합 버전에는 카메라 /frame 및 EasyOCR → Gemini embedding → Supabase 경로가 있다. Supabase 저장 성공 후 mqtt_service가 전체 본문을 ocr/text에 발행하며 session_id를 task_id로 매핑한다. mqtt_handler는 수신을 담당한다. 기존 ocr/<session_id>/status는 미리보기 및 상태 전용으로 유지한다. 기존 `static/report.html`은 이전 HTTP 중심 보고서이므로 MQTT 연동은 이 문서를 기준으로 한다.
 
 ## 연결 계약
 
@@ -34,9 +34,9 @@ OCR 완료 텍스트를 UTF-8 JSON으로 `ocr/text` 토픽에 발행한다. `tex
 | retain | false 필수. 재구독 시 retain 표시된 메시지는 무시 |
 | 본문 | UTF-8 JSON 객체, 메시지 하나 = 문서 하나 |
 | 장애 재연결 | 연결 오류 후 3초 대기, 다시 연결·구독 |
-| 인증 | 사용자명·비밀번호 설정 가능. 현재 TLS 설정은 미지원 |
+| 인증 | 사용자명·비밀번호 설정 가능. MQTT_TLS=1이면 발행·구독 모두 TLS 사용 |
 
-`mosquitto.conf`는 1883 포트의 익명 접속용 개발 설정이다. 실제 배포 브로커 주소·접근망·인증 방식은 담당자와 확정해야 한다. 현재 비암호화 TCP이므로 인증 정보를 사용하는 외부망 운영은 TLS 구현을 추가한 뒤 진행한다.
+`mosquitto.conf`는 1883 포트의 익명 접속용 개발 설정이다. 실제 배포 브로커 주소·접근망·인증 방식은 담당자와 확정해야 한다. TLS 브로커 사용 시 MQTT_TLS=1 및 해당 포트(통상 8883)를 설정한다.
 
 ## JSON 필드
 
