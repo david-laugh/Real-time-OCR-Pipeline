@@ -1,15 +1,16 @@
 "use strict";
 
-// ---- 설정값 -----------------------------------------------------------------
-const CAPTURE_INTERVAL_MS = 2000;     // 전송 간격 (이전 요청이 끝난 시점 기준으로 맞춤)
-const MAX_LONG_SIDE_PX = 1280;        // 캡처 이미지의 긴 변 최대값 (확대하지 않음)
+// ---- Settings ------------------------------------------------------------------
+const CAPTURE_INTERVAL_MS = 2000;     // Send interval, measured from the start of the previous send
+const MAX_LONG_SIDE_PX = 1280;        // Max long side of a captured frame (never upscaled)
 const JPEG_QUALITY = 0.8;
 const REQUEST_TIMEOUT_MS = 8000;
-const MAX_CONSECUTIVE_FAILURES = 3;   // 이 횟수만큼 연속 실패하면 "연결 끊김"
+const MAX_CONSECUTIVE_FAILURES = 3;   // Show "disconnected" after this many failures in a row
 const FRAME_ENDPOINT = "/frame";
 const SESSION_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+const DEBUG_REFRESH_MS = 500;
 
-// ---- 요소 -------------------------------------------------------------------
+// ---- Elements ------------------------------------------------------------------
 const $ = (id) => document.getElementById(id);
 const video = $("video");
 const placeholder = $("placeholder");
@@ -20,26 +21,36 @@ const stopBtn = $("stop");
 const statsEl = $("stats");
 const errorBox = $("error");
 const inappBox = $("inapp");
+const debugEl = $("debug");
 
 const canvas = document.createElement("canvas");
 const ctx = canvas.getContext("2d");
 
-// ---- 상태 -------------------------------------------------------------------
+// ---- State ---------------------------------------------------------------------
 const ua = navigator.userAgent;
 const isIOS = /iPhone|iPad|iPod/i.test(ua) ||
   (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 const isAndroid = /Android/i.test(ua);
 const isInApp = /KAKAOTALK|NAVER\(inapp|Instagram|FBAN|FBAV|FB_IAB|Line\/|DaumApps|everytimeApp|; wv\)/i.test(ua);
 
-const sessionId = new URLSearchParams(location.search).get("session") || "";
+const params = new URLSearchParams(location.search);
+const sessionId = params.get("session") || "";
+const DEBUG = params.get("debug") === "1";
 
 let stream = null;
-let running = false;       // 사용자가 "시작"을 누른 상태
-let loopGen = 0;           // 정지/재시작 시 이전 루프를 무효화하기 위한 세대 번호
+let running = false;       // User has pressed "start"
+let loopGen = 0;           // Generation counter that invalidates an old loop after stop/restart
 let loopTimer = null;
 let failures = 0;
 let sentCount = 0;
 let wakeLock = null;
+
+let orientation = null;          // "portrait" | "landscape", derived from the viewport
+let skipNextCapture = false;     // Set on orientation change so a mid-rotation frame is not sent
+let orientationChanges = 0;
+let skippedCaptures = 0;
+let videoResizes = 0;
+let lastCapture = "-";
 
 const STATUS_LABEL = {
   idle: "대기",
@@ -60,7 +71,45 @@ function setButtons() {
   stopBtn.disabled = !running;
 }
 
-// ---- 오류 안내 ----------------------------------------------------------------
+// ---- Orientation -----------------------------------------------------------------
+// Set <html data-orientation> from the viewport in JS instead of relying only on
+// the CSS orientation media query.
+function updateOrientation() {
+  const next = window.innerWidth > window.innerHeight ? "landscape" : "portrait";
+  if (next === orientation) return;
+  const isFirst = orientation === null;
+  orientation = next;
+  document.documentElement.dataset.orientation = next;
+  if (!isFirst) {
+    orientationChanges += 1;
+    skipNextCapture = true;
+  }
+  renderDebug();
+}
+
+// ---- Debug overlay (?debug=1) ----------------------------------------------------
+function renderDebug() {
+  if (!DEBUG) return;
+  const vv = window.visualViewport;
+  const so = screen.orientation;
+  const track = stream && stream.getVideoTracks()[0];
+  const settings = track && track.getSettings ? track.getSettings() : {};
+  const lines = [
+    `viewport      ${window.innerWidth}×${window.innerHeight}`,
+    `visualViewport ${vv ? `${Math.round(vv.width)}×${Math.round(vv.height)}` : "n/a"}`,
+    `data-orient   ${orientation}`,
+    `mq landscape  ${window.matchMedia("(orientation: landscape)").matches}`,
+    `screen.orient ${so ? `${so.type} ${so.angle}°` : "n/a"}`,
+    `window.orient ${typeof window.orientation === "number" ? `${window.orientation}°` : "n/a"}`,
+    `video         ${video.videoWidth}×${video.videoHeight}`,
+    `track         ${settings.width || "?"}×${settings.height || "?"}`,
+    `last capture  ${lastCapture}`,
+    `orient chg    ${orientationChanges}  skipped ${skippedCaptures}  video resize ${videoResizes}`,
+  ];
+  debugEl.textContent = lines.join("\n");
+}
+
+// ---- Error guidance ---------------------------------------------------------------
 function permissionSteps() {
   if (isIOS) {
     return [
@@ -151,7 +200,7 @@ function hideError() {
   errorBox.hidden = true;
 }
 
-// ---- 카메라 -----------------------------------------------------------------
+// ---- Camera --------------------------------------------------------------------
 async function openCamera() {
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     const err = new Error("mediaDevices unavailable");
@@ -200,7 +249,7 @@ function cameraAlive() {
 }
 
 function onTrackEnded() {
-  // 백그라운드에서 끊긴 경우는 visibilitychange에서 다시 연다
+  // A track that ended in the background is reopened by onVisibilityChange
   if (!running || document.hidden) return;
   stopCapture();
   const err = new Error("track ended");
@@ -208,9 +257,9 @@ function onTrackEnded() {
   showError(err);
 }
 
-// ---- 캡처 / 전송 ----------------------------------------------------------------
+// ---- Capture / upload ------------------------------------------------------------
 function captureFrame() {
-  // videoWidth/videoHeight는 현재 기기 방향이 반영된 값이라 가로/세로 모두 비율이 맞는다
+  // Read videoWidth/videoHeight on every capture so the canvas follows the current frame size
   const vw = video.videoWidth;
   const vh = video.videoHeight;
   if (!vw || !vh) return Promise.resolve(null);
@@ -219,6 +268,7 @@ function captureFrame() {
   canvas.width = Math.round(vw * scale);
   canvas.height = Math.round(vh * scale);
   ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+  lastCapture = `${canvas.width}×${canvas.height} (video ${vw}×${vh}, ${orientation})`;
   return new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", JPEG_QUALITY));
 }
 
@@ -234,7 +284,7 @@ async function uploadFrame(blob) {
       method: "POST",
       body,
       signal: controller.signal,
-      // ngrok 무료 플랜 경고 페이지 우회용 (cloudflared에서는 무시됨)
+      // Bypasses the ngrok free-plan warning page; ignored by cloudflared
       headers: { "ngrok-skip-browser-warning": "1" },
     });
     return res.ok;
@@ -249,10 +299,19 @@ async function tick(gen) {
   loopTimer = null;
   const startedAt = performance.now();
 
-  const blob = await captureFrame();
-  if (gen !== loopGen) return;
+  let blob = null;
+  if (skipNextCapture) {
+    // The frame right after a rotation may still have the old size; skip it once
+    skipNextCapture = false;
+    skippedCaptures += 1;
+    lastCapture = "skipped (orientation change)";
+  } else {
+    blob = await captureFrame();
+    if (gen !== loopGen) return;
+  }
+
   if (blob) {
-    const ok = await uploadFrame(blob);   // 실패한 프레임은 재전송하지 않고 버린다
+    const ok = await uploadFrame(blob);   // A failed frame is dropped, not retried
     if (gen !== loopGen) return;
     const elapsed = Math.round(performance.now() - startedAt);
     if (ok) {
@@ -266,6 +325,7 @@ async function tick(gen) {
       statsEl.textContent = `전송 실패 ${failures}회 연속`;
     }
   }
+  renderDebug();
 
   const wait = Math.max(0, CAPTURE_INTERVAL_MS - (performance.now() - startedAt));
   loopTimer = setTimeout(() => tick(gen), wait);
@@ -283,14 +343,14 @@ function stopLoop() {
   loopTimer = null;
 }
 
-// ---- Wake Lock ----------------------------------------------------------------
+// ---- Wake Lock -----------------------------------------------------------------
 async function acquireWakeLock() {
   if (!("wakeLock" in navigator) || wakeLock) return;
   try {
     wakeLock = await navigator.wakeLock.request("screen");
     wakeLock.addEventListener("release", () => { wakeLock = null; });
   } catch (_) {
-    wakeLock = null;   // 미지원/거부 시 무시
+    wakeLock = null;   // Unsupported or denied: ignore
   }
 }
 
@@ -299,7 +359,7 @@ function releaseWakeLock() {
   wakeLock = null;
 }
 
-// ---- 시작 / 정지 ----------------------------------------------------------------
+// ---- Start / stop --------------------------------------------------------------
 async function startCapture() {
   if (running) return;
   hideError();
@@ -315,7 +375,7 @@ async function startCapture() {
     showError(err);
     return;
   }
-  if (!running) {   // 카메라 준비 중에 "정지"를 누른 경우
+  if (!running) {   // "stop" was pressed while the camera was starting
     closeCamera();
     return;
   }
@@ -342,7 +402,7 @@ async function onVisibilityChange() {
     setStatus("paused");
     return;
   }
-  // 복귀: iOS 등에서 백그라운드 중 트랙이 끊겼으면 카메라를 다시 연다
+  // Back in foreground: iOS may have ended the track while hidden, so reopen it
   if (!cameraAlive()) {
     closeCamera();
     setStatus("starting");
@@ -366,7 +426,7 @@ async function onVisibilityChange() {
   startLoop();
 }
 
-// ---- 주소 복사 ------------------------------------------------------------------
+// ---- Copy URL --------------------------------------------------------------------
 async function copyUrl() {
   const url = location.href;
   const btn = $("copy-url");
@@ -388,10 +448,22 @@ async function copyUrl() {
   btn.textContent = copied ? "복사됨" : "복사 실패 – 주소창을 길게 눌러 복사";
 }
 
-// ---- 초기화 -----------------------------------------------------------------
+// ---- Init ----------------------------------------------------------------------
 function init() {
   setStatus("idle");
   setButtons();
+
+  updateOrientation();
+  window.addEventListener("resize", updateOrientation);
+  window.addEventListener("orientationchange", updateOrientation);
+  if (screen.orientation) screen.orientation.addEventListener("change", updateOrientation);
+
+  if (DEBUG) {
+    debugEl.hidden = false;
+    video.addEventListener("resize", () => { videoResizes += 1; renderDebug(); });
+    setInterval(renderDebug, DEBUG_REFRESH_MS);
+    renderDebug();
+  }
 
   if (isInApp) inappBox.hidden = false;
   $("copy-url").addEventListener("click", copyUrl);

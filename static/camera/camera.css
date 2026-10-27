@@ -23,7 +23,7 @@ html, body {
 
 [hidden] { display: none !important; }
 
-/* 세로(기본): 미리보기 위, 컨트롤 아래 */
+/* Portrait (default): preview on top, controls below */
 .app {
   display: flex;
   flex-direction: column;
@@ -169,15 +169,30 @@ html, body {
   font-size: 13px;
 }
 
-/* 가로: 미리보기 왼쪽, 컨트롤 오른쪽 */
-@media (orientation: landscape) {
-  .app { flex-direction: row; }
-  .panel {
-    width: 300px;
-    max-width: 45vw;
-    max-height: none;
-  }
-  .controls { flex-direction: column; }
-  .controls .btn { flex: none; }
-  .landscape-hint { display: block; }
+/* Debug overlay (?debug=1) */
+.debug {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 2;
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.7);
+  color: #a7f3d0;
+  font: 11px/1.4 ui-monospace, Menlo, monospace;
+  white-space: pre;
+  pointer-events: none;
 }
+
+/* Landscape: preview on the left, controls on the right.
+   Driven by <html data-orientation>, which camera.js sets from the viewport size. */
+html[data-orientation="landscape"] .app { flex-direction: row; }
+html[data-orientation="landscape"] .panel {
+  width: 300px;
+  max-width: 45vw;
+  max-height: none;
+}
+html[data-orientation="landscape"] .controls { flex-direction: column; }
+html[data-orientation="landscape"] .controls .btn { flex: none; }
+html[data-orientation="landscape"] .landscape-hint { display: block; }
