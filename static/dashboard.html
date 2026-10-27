@@ -6,8 +6,8 @@
 <title>OCR Pipeline — Dashboard</title>
 <!-- ============================================================
      [FILE] static/dashboard.html
-     [역할] 실시간 저장 현황 + 텍스트 검색 대시보드
-     [의존] /ws/dashboard (WebSocket), /api/search, /api/documents, /api/stats
+     [역할] 실시간 저장 현황 + RAG 문서 질문 대시보드
+     [의존] /ws/dashboard (WebSocket), /api/rag/search, /api/documents, /api/stats
      ============================================================ -->
 <style>
   /* ── 디자인 토큰 ─────────────────────────────────── */
@@ -130,6 +130,14 @@
     font-size: 20px;
     font-weight: 700;
     color: var(--blue);
+  }
+
+  /* ── Zone 3: RAG 문서 질문 ──────────────────────── */
+  .search-scope {
+    min-height: 17px;
+    margin: -6px 0 10px;
+    color: var(--muted);
+    font-size: 11px;
   }
 
   /* ── Zone 2: 실시간 저장 현황 ────────────────────── */
@@ -292,7 +300,7 @@
      [LAYOUT] 3-column dashboard
      zone-1: 연결 상태 + 통계
      zone-2: 실시간 저장 현황 (피드)
-     zone-3: 텍스트 검색 (FTS5)
+     zone-3: RAG 문서 질문 (Supabase + Gemini)
      ============================================================ -->
 <nav style="display:flex;align-items:center;gap:16px;padding:10px 20px;background:var(--panel);border-bottom:1px solid var(--line);">
   <span style="font-size:14px;font-weight:700;letter-spacing:.02em;">OCR <span style="color:var(--violet);">Pipeline</span></span>
@@ -350,16 +358,18 @@
     </div>
   </div>
 
-  <!-- ── Zone 3: 텍스트 검색 ───────────────────────── -->
+  <!-- ── Zone 3: RAG 문서 질문 ─────────────────────── -->
   <div class="zone" id="zone-search">
     <div class="zone-title">
-      텍스트 검색
+      RAG 문서 질문
       <span class="spinner" id="searchSpinner"></span>
     </div>
 
+    <div class="search-scope" id="searchScope">검색 범위: 저장된 전체 문서</div>
+
     <div class="search-box">
-      <input type="text" id="searchInput" placeholder="저장된 문서에서 검색..." />
-      <button id="searchBtn">검색</button>
+      <input type="text" id="searchInput" placeholder="저장된 OCR 문서에 질문하세요..." />
+      <button id="searchBtn">질문</button>
     </div>
 
     <div class="answer-box" id="answerBox"></div>
@@ -373,7 +383,7 @@
 <!-- ============================================================
      [SCRIPT] 대시보드 로직
      - WebSocket: 실시간 문서 저장 이벤트 수신
-     - REST: 검색 API 호출
+     - REST: RAG 질문 API 호출
      ============================================================ -->
 <script src="/static/pair/qr-pairing.js?v=2026-10-27.2" defer></script>
 <script>
@@ -382,7 +392,7 @@
 
   /* ── [CONFIG] ─────────────────────────────────────── */
   const WS_PATH   = '/ws/dashboard';
-  const API_SEARCH = '/api/search';
+  const API_SEARCH = '/api/rag/search';
   const API_DOCS   = '/api/documents';
   const MAX_FEED   = 30;        // 피드에 표시할 최대 항목 수
   const TARGET_TOTAL = 100;     // 프로그레스 바 기준 총 문서 수
@@ -482,7 +492,7 @@
     }
   }
 
-  /* ── [SEARCH] 텍스트 검색 (FTS5) ─────────────────── */
+  /* ── [SEARCH] RAG 문서 질문 ───────────────────────── */
   async function doSearch() {
     const query = $searchInput.value.trim();
     if (!query) return;
@@ -494,10 +504,11 @@
     $sources.innerHTML = '';
 
     try {
+      const body = { query: query, limit: 5 };
       const res = await fetch(API_SEARCH, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: query, limit: 5 }),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
 
@@ -508,7 +519,7 @@
         data.sources.forEach(function (src) {
           const chip = document.createElement('span');
           chip.className = 'source-chip';
-          chip.textContent = '출처 ' + src.doc_id + ' — ' + src.title;
+          chip.textContent = '출처 ' + src.title + (typeof src.score === 'number' ? ' · ' + src.score.toFixed(2) : '');
           $sources.appendChild(chip);
         });
       } else {
@@ -516,7 +527,7 @@
         $answerBox.classList.add('show');
       }
     } catch (err) {
-      $answerBox.textContent = '검색 중 오류가 발생했습니다.';
+    $answerBox.textContent = '문서 질문 중 오류가 발생했습니다.';
       $answerBox.classList.add('show');
     } finally {
       $searchBtn.disabled = false;
