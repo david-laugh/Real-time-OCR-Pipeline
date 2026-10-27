@@ -15,7 +15,7 @@ PC 대시보드에 QR을 띄우고, 휴대폰이 QR을 찍으면 카메라 페�
 - [x] `<qr-pairing>` 조각 `static/pair/qr-pairing.js`
 - [x] `/pair` 단독 페이지 `static/pair/index.html`
 - [x] 로컬 확인 (아래 "테스트 기록")
-- [x] push, PR(→ release)
+- [x] push, PR(→ release): https://github.com/david-laugh/Real-time-OCR-Pipeline/pull/3
 - [ ] **터널로 실기기 QR 스캔 → "연결됨" 확인** ← 다음 할 일 (아래 "실기기 확인 방법")
 
 ## 결정사항
