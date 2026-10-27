@@ -22,7 +22,7 @@ app = FastAPI(title="OCR Pipeline Dashboard")
 
 # ── [INIT] 모듈 초기화 ──────────────────────────────
 meta_store = MetaStore(path="./data/documents.db")
-dedup = DedupFilter(threshold=0.85, buffer_size=5, min_length=20)
+dedup = DedupFilter(threshold=0.85, buffer_size=5, min_length=20, enabled=False)
 pipeline = Pipeline(meta_store=meta_store, dedup=dedup)
 search_service = SearchService(meta_store=meta_store)
 

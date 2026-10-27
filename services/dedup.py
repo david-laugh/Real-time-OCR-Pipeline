@@ -10,12 +10,15 @@ from difflib import SequenceMatcher
 
 
 class DedupFilter:
-    def __init__(self, threshold: float = 0.85, buffer_size: int = 5, min_length: int = 20):
+    def __init__(self, threshold: float = 0.85, buffer_size: int = 5, min_length: int = 20, enabled: bool = True):
         self._threshold = threshold
         self._min_length = min_length
         self._buffer: deque[str] = deque(maxlen=buffer_size)
+        self.enabled = enabled
 
     def is_duplicate(self, text: str) -> bool:
+        if not self.enabled:
+            return False
         if len(text.strip()) < self._min_length:
             return True
         for prev in self._buffer:
