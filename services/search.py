@@ -2,8 +2,6 @@
 ============================================================
 [FILE] services/search.py
 [역할] 텍스트 검색 서비스 — SQLite FTS5 기반 전문검색
-[합칠 때] 벡터 검색(ChromaDB) 추가 시 search() 안에 벡터 경로 분기
-         LLM 요약 추가 시 search() 결과를 LLM에 전달하는 단계 추가
 ============================================================
 """
 
@@ -18,7 +16,14 @@ class SearchService:
         words = query.strip().split()
         if not words:
             return ""
-        return " OR ".join(w for w in words if w)
+        sanitized = []
+        for w in words:
+            cleaned = "".join(c for c in w if c.isalnum() or c in "-_")
+            if cleaned:
+                sanitized.append('"' + cleaned + '"')
+        if not sanitized:
+            return ""
+        return " OR ".join(sanitized)
 
     def search(self, query: str, limit: int = 5) -> dict:
         query = query.strip()

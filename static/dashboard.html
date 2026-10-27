@@ -8,7 +8,6 @@
      [FILE] static/dashboard.html
      [역할] 실시간 저장 현황 + 텍스트 검색 대시보드
      [의존] /ws/dashboard (WebSocket), /api/search, /api/documents, /api/stats
-     [합칠 때] QR 연동 영역(zone-1)에 QR 모듈 삽입, 카메라 상태는 WS 메시지로 수신
      ============================================================ -->
 <style>
   /* ── 디자인 토큰 ─────────────────────────────────── */
@@ -90,8 +89,7 @@
   .badge-gray::before  { background: var(--muted); }
   @keyframes pulse { 50% { opacity: .2; } }
 
-  /* ── Zone 1: 연결 상태 (나중에 QR 모듈 합침) ────── */
-  /* [합칠 때] #zone-connect 안에 QR 캔버스 + 카메라 프리뷰 삽입 */
+  /* ── Zone 1: 연결 상태 ───────────────────────────── */
   .connect-status {
     padding: 14px;
     background: var(--panel2);
@@ -108,15 +106,26 @@
     font-family: "SFMono-Regular", Consolas, monospace;
     font-size: 13px;
   }
-  .qr-placeholder {
-    aspect-ratio: 1;
+  .stat-mini {
+    padding: 14px;
     background: var(--panel2);
-    border: 1px dashed var(--line);
+    border: 1px solid var(--line);
     border-radius: 10px;
-    display: grid;
-    place-items: center;
+    margin-bottom: 12px;
+    text-align: center;
+  }
+  .stat-mini .label {
+    font-size: 10px;
     color: var(--muted);
-    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    margin-bottom: 4px;
+  }
+  .stat-mini .value {
+    font-family: "SFMono-Regular", Consolas, monospace;
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--blue);
   }
 
   /* ── Zone 2: 실시간 저장 현황 ────────────────────── */
@@ -277,7 +286,7 @@
 
 <!-- ============================================================
      [LAYOUT] 3-column dashboard
-     zone-1: 연결 상태 (QR 합칠 자리)
+     zone-1: 연결 상태 + 통계
      zone-2: 실시간 저장 현황 (피드)
      zone-3: 텍스트 검색 (FTS5)
      ============================================================ -->
@@ -288,8 +297,7 @@
 </nav>
 <div class="dash">
 
-  <!-- ── Zone 1: 연결 상태 ─────────────────────────── -->
-  <!-- [합칠 때] QR 생성 코드, 카메라 연동 WebSocket 여기에 추가 -->
+  <!-- ── Zone 1: 연결 상태 + 통계 ──────────────────── -->
   <div class="zone" id="zone-connect">
     <div class="zone-title">
       연결 상태
@@ -301,14 +309,19 @@
       <div class="value" id="wsStatus">연결 중...</div>
     </div>
 
-    <div class="connect-status">
-      <div class="label">카메라</div>
-      <div class="value" id="camStatus">—</div>
+    <div class="stat-mini">
+      <div class="label">Total Docs</div>
+      <div class="value" id="sideDocCount">0</div>
     </div>
 
-    <!-- [합칠 때] 이 자리에 QR 캔버스 삽입 -->
-    <div class="qr-placeholder" id="qrArea">
-      QR 모듈 연동 예정
+    <div class="stat-mini">
+      <div class="label">Avg Length</div>
+      <div class="value" id="sideAvgChars">0</div>
+    </div>
+
+    <div class="stat-mini">
+      <div class="label">Tasks</div>
+      <div class="value" id="sideTaskCount">0</div>
     </div>
   </div>
 
@@ -355,7 +368,6 @@
      [SCRIPT] 대시보드 로직
      - WebSocket: 실시간 문서 저장 이벤트 수신
      - REST: 검색 API 호출
-     [합칠 때] initCamera(), initQR() 함수 추가 후 onWsOpen()에서 호출
      ============================================================ -->
 <script>
 (function () {
@@ -371,8 +383,10 @@
   /* ── [DOM REFS] ───────────────────────────────────── */
   const $connBadge    = document.getElementById('connBadge');
   const $wsStatus     = document.getElementById('wsStatus');
-  const $camStatus    = document.getElementById('camStatus');
   const $liveBadge    = document.getElementById('liveBadge');
+  const $sideDocCount = document.getElementById('sideDocCount');
+  const $sideAvgChars = document.getElementById('sideAvgChars');
+  const $sideTaskCount= document.getElementById('sideTaskCount');
   const $docCount     = document.getElementById('docCount');
   const $progressBar  = document.getElementById('progressBar');
   const $feed         = document.getElementById('feed');
@@ -389,7 +403,6 @@
   let totalDocs = 0;
 
   /* ── [WEBSOCKET] 실시간 연결 ──────────────────────── */
-  /* [합칠 때] 카메라 상태 메시지(type: "camera_status") 처리 추가 */
   function connectWs() {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     ws = new WebSocket(`${proto}://${location.host}${WS_PATH}`);
@@ -429,11 +442,6 @@
       case 'stats':
         updateStats(msg.data.total);
         break;
-
-      /* [합칠 때] 카메라 연결 상태 */
-      case 'camera_status':
-        $camStatus.textContent = msg.data.connected ? '촬영 중' : '연결 안 됨';
-        break;
     }
   }
 
@@ -441,6 +449,7 @@
   function updateStats(count) {
     totalDocs = count;
     $docCount.textContent = count;
+    $sideDocCount.textContent = count;
     $progressBar.style.width = Math.min(100, (count / TARGET_TOTAL) * 100) + '%';
   }
 
@@ -516,8 +525,19 @@
   /* ── [INIT] 초기 데이터 로드 ─────────────────────── */
   async function loadInitial() {
     try {
-      const res = await fetch(API_DOCS + '?limit=20');
-      const docs = await res.json();
+      const [docsRes, statsRes, tasksRes] = await Promise.all([
+        fetch(API_DOCS + '?limit=20'),
+        fetch('/api/stats'),
+        fetch('/api/tasks'),
+      ]);
+      const docs = await docsRes.json();
+      const stats = await statsRes.json();
+      const tasks = await tasksRes.json();
+
+      $sideDocCount.textContent = stats.total;
+      $sideAvgChars.textContent = stats.avg_chars;
+      $sideTaskCount.textContent = tasks.length;
+
       if (docs.length > 0) {
         $feedEmpty.style.display = 'none';
         docs.forEach(function (doc) {

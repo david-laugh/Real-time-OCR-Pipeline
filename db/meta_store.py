@@ -3,7 +3,6 @@
 [FILE] db/meta_store.py
 [역할] SQLite 메타데이터 저장 + FTS5 전문검색
 [테이블] documents (원문 저장), documents_fts (전문검색 인덱스)
-[합칠 때] OCR 원본 이미지 경로 컬럼 추가, 카메라 세션 ID 컬럼 추가
 ============================================================
 """
 
@@ -56,31 +55,37 @@ class MetaStore:
         cols = [r[1] for r in self._conn.execute("PRAGMA table_info(documents)").fetchall()]
         if "task_id" not in cols:
             self._conn.execute("ALTER TABLE documents ADD COLUMN task_id TEXT NOT NULL DEFAULT 'default'")
+        if "source_id" not in cols:
+            self._conn.execute("ALTER TABLE documents ADD COLUMN source_id TEXT")
 
-    def save(self, doc_id: str, title: str, content: str, task_id: str = "default") -> int:
+    def save(self, doc_id: str, title: str, content: str, task_id: str = "default", source_id: str | None = None) -> int:
         cur = self._conn.execute(
-            "INSERT INTO documents (doc_id, task_id, title, content, char_count) VALUES (?, ?, ?, ?, ?)",
-            (doc_id, task_id, title, content, len(content)),
+            "INSERT INTO documents (doc_id, task_id, title, content, char_count, source_id) VALUES (?, ?, ?, ?, ?, ?)",
+            (doc_id, task_id, title, content, len(content), source_id),
         )
         self._conn.commit()
         return cur.lastrowid
 
+    def get_next_doc_num(self) -> int:
+        row = self._conn.execute("SELECT MAX(id) as max_id FROM documents").fetchone()
+        return (row["max_id"] or 0) + 1
+
     def get_recent(self, limit: int = 20, task_id: str | None = None) -> list[dict]:
         if task_id:
             rows = self._conn.execute(
-                "SELECT doc_id, task_id, title, char_count, created_at FROM documents WHERE task_id = ? ORDER BY id DESC LIMIT ?",
+                "SELECT doc_id, task_id, title, char_count, source_id, created_at FROM documents WHERE task_id = ? ORDER BY id DESC LIMIT ?",
                 (task_id, limit),
             ).fetchall()
         else:
             rows = self._conn.execute(
-                "SELECT doc_id, task_id, title, char_count, created_at FROM documents ORDER BY id DESC LIMIT ?",
+                "SELECT doc_id, task_id, title, char_count, source_id, created_at FROM documents ORDER BY id DESC LIMIT ?",
                 (limit,),
             ).fetchall()
         return [dict(r) for r in rows]
 
     def get_by_id(self, doc_id: str) -> dict | None:
         row = self._conn.execute(
-            "SELECT doc_id, task_id, title, content, char_count, created_at FROM documents WHERE doc_id = ?",
+            "SELECT doc_id, task_id, title, content, char_count, source_id, created_at FROM documents WHERE doc_id = ?",
             (doc_id,),
         ).fetchone()
         return dict(row) if row else None
@@ -94,7 +99,7 @@ class MetaStore:
 
     def get_docs_by_task(self, task_id: str) -> list[dict]:
         rows = self._conn.execute(
-            "SELECT doc_id, task_id, title, content, char_count, created_at FROM documents WHERE task_id = ? ORDER BY id ASC",
+            "SELECT doc_id, task_id, title, content, char_count, source_id, created_at FROM documents WHERE task_id = ? ORDER BY id ASC",
             (task_id,),
         ).fetchall()
         return [dict(r) for r in rows]

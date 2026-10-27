@@ -8,13 +8,12 @@
   GET  /api/stats       — 통계
   POST /api/search      — FTS5 텍스트 검색
   WS   /ws/dashboard    — 대시보드 실시간 이벤트
-[합칠 때] WS /ws/camera/{session_id} 라우트 추가
-         GET /api/session (QR용 세션 정보) 추가
 ============================================================
 """
 
 import json
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 router = APIRouter()
@@ -35,7 +34,6 @@ def init(pipeline, search_service, meta_store):
 class TextInput(BaseModel):
     text: str
     task_id: str = "default"
-    source_id: str | None = None
 
 
 class SearchInput(BaseModel):
@@ -49,21 +47,22 @@ async def process_text(body: TextInput):
     if result is None:
         return {"status": "skipped", "reason": "duplicate or too short"}
 
-    msg = json.dumps({"type": "new_document", "data": result})
-    for ws in list(_dashboard_clients):
+    await _broadcast({"type": "new_document", "data": result})
+    await _broadcast({"type": "stats", "data": {"total": _store.get_count()}})
+
+    return {"status": "stored", **result}
+
+
+async def _broadcast(payload: dict):
+    msg = json.dumps(payload)
+    dead: list[WebSocket] = []
+    for ws in _dashboard_clients:
         try:
             await ws.send_text(msg)
         except Exception:
-            _dashboard_clients.remove(ws)
-
-    stats_msg = json.dumps({"type": "stats", "data": {"total": _store.get_count()}})
-    for ws in list(_dashboard_clients):
-        try:
-            await ws.send_text(stats_msg)
-        except Exception:
-            _dashboard_clients.remove(ws)
-
-    return {"status": "stored", **result}
+            dead.append(ws)
+    for ws in dead:
+        _dashboard_clients.remove(ws)
 
 
 @router.get("/api/tasks")
@@ -85,7 +84,7 @@ async def list_documents(limit: int = 20, task_id: str | None = None):
 async def get_document(doc_id: str):
     doc = _store.get_by_id(doc_id)
     if doc is None:
-        return {"error": "not found"}
+        return JSONResponse({"error": "not found"}, status_code=404)
     return doc
 
 

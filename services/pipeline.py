@@ -3,8 +3,6 @@
 [FILE] services/pipeline.py
 [역할] 텍스트 처리 오케스트레이터 — dedup → 저장 → broadcast
 [입력] OCR 처리 완료된 텍스트 문자열
-[합칠 때] 벡터 임베딩 단계 삽입 (process() 내 step 3 위치)
-         카메라 프레임 → OCR 단계를 앞에 연결
 ============================================================
 """
 
@@ -17,7 +15,7 @@ class Pipeline:
     def __init__(self, meta_store: MetaStore, dedup: DedupFilter):
         self._store = meta_store
         self._dedup = dedup
-        self._counter = meta_store.get_count()
+        self._counter = meta_store.get_next_doc_num() - 1
 
     def process(self, text: str, task_id: str = "default") -> dict | None:
         text = text.strip()

@@ -3,7 +3,6 @@
 [FILE] main.py
 [역할] FastAPI 앱 진입점 — 서버 기동, 모듈 초기화, 라우터 등록
 [실행] uvicorn main:app --reload --host 0.0.0.0 --port 8000
-[합칠 때] QR 세션 생성 로직, 카메라 WebSocket 라우트 추가
 ============================================================
 """
 
@@ -22,7 +21,6 @@ from api.routes import router, init as init_routes
 app = FastAPI(title="OCR Pipeline Dashboard")
 
 # ── [INIT] 모듈 초기화 ──────────────────────────────
-# [합칠 때] QR 매니저, 카메라 세션 매니저 여기서 초기화
 meta_store = MetaStore(path="./data/documents.db")
 dedup = DedupFilter(threshold=0.85, buffer_size=5, min_length=20)
 pipeline = Pipeline(meta_store=meta_store, dedup=dedup)
