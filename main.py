@@ -13,7 +13,7 @@ BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 logging.basicConfig(level=logging.INFO)
 
-from api import camera, frame, pair, routes, session
+from api import camera, frame, pair, routes, search, session
 from db.meta_store import MetaStore
 from services import mqtt_service
 from services.dedup import DedupFilter
@@ -51,7 +51,8 @@ app = FastAPI(title="Real-time OCR Pipeline", lifespan=lifespan)
 app.add_middleware(CORSMiddleware,
     allow_origins=["https://david-laugh.github.io"],
     allow_methods=["POST"], allow_headers=["*"])
-for router in (camera.router, frame.router, session.router, pair.router, routes.router):
+# search.router: RAG POST /api/rag/search + GET /chat (routes.router keeps FTS5 POST /api/search)
+for router in (camera.router, frame.router, session.router, pair.router, routes.router, search.router):
     app.include_router(router)
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 
