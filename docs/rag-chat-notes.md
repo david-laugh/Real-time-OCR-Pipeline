@@ -17,8 +17,8 @@ Supabase `ocr_documents`에 쌓인 OCR 텍스트를 근거로 질문에 답하�
 - [x] Supabase SQL Editor에서 위 파일 실행 (2026-10-27, "Success. No rows returned")
 - [x] `gemini_service.py`/`db/supabase.py` 최소 수정 (import·시그니처 확인, 실제 API 호출은 `.env` 준비 후)
 - [x] 서버: `services/rag_service.py`, `api/search.py`, `main.py` (실데이터로 `/api/search` 전체 응답 확인)
-- [ ] **시드 스크립트** ← 다음 할 일, `scripts/seed_conveyor.py` → `session_id='seed'`로 컨베이어 문단 저장
-- [ ] `<rag-chat>` 조각 `static/chat/rag-chat.js`
+- [x] 시드 스크립트 `scripts/seed_conveyor.py` → `session_id='seed'` 100행 저장 (2026-10-27)
+- [ ] **`<rag-chat>` 조각** ← 다음 할 일, `static/chat/rag-chat.js`
 - [ ] `/chat` 단독 페이지 `static/chat/index.html`
 - [ ] 로컬 확인 → push, PR(→ release)
 
@@ -49,7 +49,8 @@ Supabase `ocr_documents`에 쌓인 OCR 텍스트를 근거로 질문에 답하�
 | 오류 | `session_id` 형식 오류 400, 검증 오류 422(`limit` 1~20, `query` 1000자), 사용량 한도 429, 그 외 실패 502 `{detail:"검색 중 오류가 났어요. 잠시 후 다시 해 주세요"}` | 원본 오류는 로그에만 |
 | 2번 파일 수정 | `gemini_service.py`: `embed_text(text, task_type="RETRIEVAL_DOCUMENT")` + `generate_text(prompt, system_instruction=None, model=None)` + `is_rate_limit_error(exc)` + `CHAT_FALLBACK_MODEL` / `db/supabase.py`: `match_ocr_documents(query_embedding, match_count=5, session_id=None)` | 최소 수정, 기존 호출부 영향 없음 |
 | 시드 | 컨베이어 HTML의 `PASSAGES`(100개, `{title, body[]}`)를 `session_id='seed'`로 저장 | 실제 OCR 없이 검색 테스트 |
-| 시드 재실행 | 저장 전에 `session_id='seed'` 행을 지움 | 중복 방지 |
+| 시드 재실행 | 전부 임베딩한 뒤 `session_id='seed'` 행을 지우고 새로 저장 | 중복 방지. 임베딩 도중 실패해도 기존 seed는 남음 |
+| 시드 실행 | `python -m scripts.seed_conveyor <html> [--dry-run] [--limit N]`, `.env`는 python-dotenv로 읽음. 임베딩 429면 30초 쉬고 최대 4회 재시도 | `--limit`도 기존 seed 전체를 지우므로 주의 |
 | 형태 | 커스텀 태그 `<rag-chat>` + Shadow DOM, 스크립트 1개 | `<qr-pairing>`과 같은 방식 |
 | main.py | `3번 (대시보드/RAG):` 주석 아래 라우터 등록 + import 줄에 추가 | |
 | CORS | 수정 안 함 | `/chat`은 같은 origin. github.io 대시보드에서 부를 경우 지금 설정(POST 허용)으로 가능 |
@@ -98,12 +99,13 @@ api/search.py                POST /api/search, GET /chat
 main.py                      라우터 등록
 static/chat/rag-chat.js      <rag-chat> 조각
 static/chat/index.html       /chat 테스트 페이지
-scripts/seed_conveyor.py     컨베이어 HTML 경로를 인자로 받아 seed 저장
+scripts/seed_conveyor.py     컨베이어 HTML 경로를 인자로 받아 seed 저장 (python -m scripts.seed_conveyor)
 ```
 
 ## 시드 원본
 - `C:\Users\1\Downloads\ocr-conveyor-test.html` (저장소에 넣지 않음, 경로를 인자로 전달)
-- `PASSAGES` 100개, 영어 문단. title → `title`, body 문단들을 줄바꿈으로 이어 → `text`
+- `PASSAGES` 100개, 영어 문단. title → `title`, body 문단들을 줄바꿈으로 이어 → `text` (제목은 text에 넣지 않음)
+- JS 문자열은 큰따옴표 + `\"` 이스케이프뿐 → JSON 디코딩으로 처리
 
 ## 테스트 기록
 - 2026-10-27, RPC 확인 쿼리(사용자 실행): similarity 첫 행 1, 다음 0.907, 0.900 — 정상
@@ -130,6 +132,9 @@ READING IN TRANSLATION...`으로 시작
 - 2026-10-27, 품질 필터: 실데이터 30행 중 3행 제외(`4`, `4uty`, `Al about i Monrment…`), 시드 카드 100개 + 문단 204개 전부 통과
 - 2026-10-27, 429 처리: 가짜 Gemini로 기본 429 → 예비 성공 / 둘 다 429 → `RateLimitedError` / 예비 빈 값 → 재시도 없음 확인. TestClient로 HTTP 429·502 응답에 원본 오류 없음 확인
 - 2026-10-27, `/api/search` 실호출 (`gemini-3.5-flash-lite`): 번역 질문 2.9초, SB-4471 2.2초(41-B/7, 24 N-m), 걷기 2.5초, 화성 1.6초("포함되어 있지 않습니다"). 잡음 행 출처에서 빠짐
+- 2026-10-27, 시드: `--dry-run` 100개 파싱(`\"` 포함 문단 정상), 실행 시 기존 seed 0행 삭제 → 100행 저장, 개수 확인 100
+  - `session_id='seed'` 검색: "케틀은 몇 도에서 자동으로 꺼져?" → 100 °C, 1위 Instructions for the New Kettle(0.68) / "종이가 사마르칸트에 도착한 해는?" → 751년, 1위 A Short History of Paper(0.73)
+  - 전체 검색에 seed가 섞여도 실데이터 번역 질문 1위는 `ON READING IN TRANSLATION` 유지
 - 서버 기동: `easyocr` 미설치 시 `api/frame` → `frame_sink` → `ocr_service`의 `import easyocr`에서 기동 실패 확인 → `requirements.txt` 전체 설치 후 정상
 
 ## 남은 일 / 이슈
