@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 환경 변수 / 비밀값
+.env
+
+# 모바일 카메라 목업 수신 API가 저장하는 프레임
+tmp_frames/
+
+# OS / 에디터
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

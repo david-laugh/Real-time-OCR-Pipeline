@@ -1,0 +1,4 @@
+# 팀 Python 버전: 3.10 (아래 버전은 3.10에서 설치 가능한 것으로 고정)
+fastapi==0.115.12
+uvicorn[standard]==0.34.3
+python-multipart==0.0.20
