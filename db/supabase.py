@@ -25,18 +25,15 @@ from __future__ import annotations
 
 import os
 from functools import lru_cache
-from typing import TYPE_CHECKING, Any, Dict, List
+from typing import Any, Dict, List
 
-if TYPE_CHECKING:
-    from supabase import Client
+from supabase import Client, create_client
 
 OCR_TABLE = os.getenv("SUPABASE_OCR_TABLE", "ocr_documents")
 
 
 @lru_cache(maxsize=1)
 def get_client() -> Client:
-    from supabase import create_client
-
     url = os.getenv("SUPABASE_URL")
     key = os.getenv("SUPABASE_KEY")
     if not url or not key:

@@ -7,7 +7,3 @@ google-genai==2.33.0
 supabase==2.33.0
 paho-mqtt==2.1.0
 easyocr==1.7.2
-aiomqtt>=2.5,<3
-pydantic>=2,<3
-python-dotenv>=1,<2
-websockets>=12
