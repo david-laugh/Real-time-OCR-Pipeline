@@ -16,7 +16,8 @@ PC 대시보드에 QR을 띄우고, 휴대폰이 QR을 찍으면 카메라 페�
 - [x] `/pair` 단독 페이지 `static/pair/index.html`
 - [x] 로컬 확인 (아래 "테스트 기록")
 - [x] push, PR(→ release): https://github.com/david-laugh/Real-time-OCR-Pipeline/pull/3
-- [ ] **터널로 실기기 QR 스캔 → "연결됨" 확인** ← 다음 할 일 (아래 "실기기 확인 방법")
+- [x] 터널로 실기기 QR 스캔 → "연결됨" 확인 (2026-10-27, 아래 "실기기 확인 방법" 1~7단계 통과)
+- [ ] **팀 리뷰 → 머지** ← 다음 할 일
 
 ## 결정사항
 | 항목 | 결정 | 이유 |
@@ -82,6 +83,7 @@ static/vendor/qrcode/          qrcode.js + LICENSE
   - 서버 종료 → "서버 응답 없음"
   - `feature/ocr`과 머지 시뮬레이션(`git merge-tree`): **충돌 없음**, main.py에 CORS와 라우터 등록이 함께 들어감
 - QR 디코딩은 PC에서 확인 못 함 → 실기기 스캔으로 확인
+- 2026-10-27, 실기기(cloudflared 터널): 터널 주소 `/pair`에서 경고 없음, 휴대폰 카메라 앱 QR 스캔 → 같은 세션 ID로 카메라 페이지 열림, "연결됨" 표시, 정지 후 "연결 끊김", "새 세션" 후 재스캔 "연결됨" — 통과
 
 ## 실기기 확인 방법
 1. PC: `.\.venv\Scripts\Activate.ps1` → `uvicorn main:app --host 0.0.0.0 --port 8000`
@@ -94,6 +96,5 @@ static/vendor/qrcode/          qrcode.js + LICENSE
 8. (선택) `/pair?pages=1` → QR이 github.io 카메라 페이지로 연결. 2번 팀원 PR(feature/ocr: CORS, 루트 index.html) 머지 후에만 동작
 
 ## 남은 일 / 이슈
-- 실기기 QR 스캔 확인
 - 대시보드 담당자에게 붙이는 방법 공유
 - 세션 상태는 서버 메모리 → 재시작 시 "대기 중"으로 돌아감(휴대폰이 계속 보내면 곧 "연결됨"), 단일 워커 전제
