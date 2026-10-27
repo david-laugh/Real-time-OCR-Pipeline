@@ -1,8 +1,8 @@
 """모바일 카메라에서 올라온 프레임을 처리하는 Sink.
 
 POST /frame 라우터(api/frame.py)는 `get_frame_sink()`가 돌려준 객체의
-`handle(session_id, jpeg_bytes)`만 호출한다. 현재는 OCR 구현(OcrSink)이
-연결되어 있다. tmp_frames/에 저장하는 LocalFolderSink는 테스트용이다.
+`handle(session_id, jpeg_bytes)`만 호출한다. 현재는 tmp_frames/에 저장만 하는
+목업(LocalFolderSink)이 연결되어 있다.
 
 [2번 팀원] OCR Sink 연결 방법
 * handle()은 백그라운드에서 호출되며 오래 걸려도 휴대폰 전송에 영향 없음.
@@ -119,12 +119,10 @@ class OcrSink:
             self._last_text[session_id] = text
             document_id = str(row.get("id", ""))
             logger.info("ocr document stored (session=%s, id=%s)", session_id, document_id)
-            # The status topic only contains a preview. Send the complete body
-            # on the separate document topic consumed by the SQLite dashboard.
             try:
                 mqtt_service.publish_document(session_id, text)
             except Exception:
-                logger.exception("ocr document publish failed (session=%s, id=%s)", session_id, document_id)
+                logger.exception("ocr document publish failed (session=%s)", session_id)
             await self._notify(
                 session_id, "stored", title=title, text=text,
                 document_id=document_id, created_at=row.get("created_at"),
@@ -173,4 +171,5 @@ _sink: FrameSink = OcrSink()
 
 
 def get_frame_sink() -> FrameSink:
+    # OCR 연결 시 여기만 교체: return OcrSink()
     return _sink

@@ -118,30 +118,19 @@ cloudflared tunnel --url http://localhost:8000
 ```
 
 `document_id`, `created_at`은 `stored`에만 있다. 본문 전체와 embedding은 Supabase에서 조회한다.
-통합 대시보드는 서버의 `/ws/dashboard`에 연결한다. 브라우저용 MQTT 포트를 따로 열 필요가 없다.
+통합 대시보드는 `/ws/dashboard`로 서버에 연결한다. 브라우저용 MQTT 포트는 별도로 필요하지 않다.
 
-### 통합 대시보드와 본문 전달
+### MQTT 본문 및 대시보드 통합
 
-`새 폴더`의 대시보드 코드를 저장소 루트에 통합했다. 카메라 `/camera`, 업로드 `/frame`, GitHub Pages의 `index.html`은 유지한다.
+Supabase 저장 성공 후 `ocr/text`에 `{"text":"전체 본문","task_id":"session_id"}`를 추가 발행한다. 서버의 MQTT 수신부가 SQLite에 저장하고 대시보드로 알린다. `MQTT_TOPIC`으로 본문 토픽을 변경할 수 있으며 `MQTT_TLS=1`은 발행·구독 모두에 적용된다.
 
-```text
-카메라 → /frame → EasyOCR → Gemini embedding → Supabase
-                                              ↓ 저장 성공
-                           mqtt_service → ocr/text {text, task_id=session_id}
-                                              ↓ MQTT broker
-                           mqtt_handler → SQLite → /ws/dashboard
-```
+- `/`: 대시보드, `/viewer`: 문서 검색/뷰어
+- 기존 `/camera`, `/frame`, `/pair`, `/session/{session_id}/status` 유지
+- `.env.example`을 참고해 `.env`에 Gemini/Supabase/MQTT 설정 입력
+- Windows에서는 `python run.py`로 단일 worker 실행
+- Supabase와 SQLite는 별도 저장소이며, MQTT 재전송 중복 방지와 두 저장소 간 자동 복구는 아직 없다.
 
-- `http://localhost:8000/`: 실시간 대시보드
-- `http://localhost:8000/viewer`: 문서 뷰어/검색
-- `MQTT_TOPIC` 기본값 `ocr/text`: 본문 발행·구독에 공통 적용
-- `ocr/<session_id>/status`: 기존 진행 상태 이벤트를 그대로 유지
-- `.env.example`을 `.env`로 복사한 뒤 기존 Gemini/Supabase/MQTT 설정을 입력
-- Supabase는 원본/embedding 저장소, SQLite는 대시보드 본문/FTS 검색 저장소다. 두 저장소 사이의 원자적 동기화나 자동 복구는 없다.
-- MQTT 전송 실패는 이미 성공한 Supabase 저장을 취소하지 않는다. 대시보드의 복구·재전송 멱등성은 별도 구현이 필요하다.
-- Windows 이벤트 루프 호환을 위해 `python run.py`로 단일 프로세스를 실행한다.
-
-상세 계약과 검증 범위: [MQTT 명세](docs/MQTT_OCR_SPEC.md), [통합 기록](docs/INTEGRATION.md).
+병합 검토 및 테스트 범위는 [RELEASE_MERGE.md](docs/RELEASE_MERGE.md)를 참고한다.
 
 ## 5. 파일 구성
 

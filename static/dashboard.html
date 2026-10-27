@@ -106,6 +106,10 @@
     font-family: "SFMono-Regular", Consolas, monospace;
     font-size: 13px;
   }
+  .camera-pairing {
+    margin: 4px 0 12px;
+    --qr-pairing-size: 188px;
+  }
   .stat-mini {
     padding: 14px;
     background: var(--panel2);
@@ -309,6 +313,8 @@
       <div class="value" id="wsStatus">연결 중...</div>
     </div>
 
+    <qr-pairing class="camera-pairing" aria-label="휴대폰 카메라 연결"></qr-pairing>
+
     <div class="stat-mini">
       <div class="label">Total Docs</div>
       <div class="value" id="sideDocCount">0</div>
@@ -369,6 +375,7 @@
      - WebSocket: 실시간 문서 저장 이벤트 수신
      - REST: 검색 API 호출
      ============================================================ -->
+<script src="/static/pair/qr-pairing.js?v=2026-10-27.2" defer></script>
 <script>
 (function () {
   'use strict';

@@ -13,10 +13,8 @@ from __future__ import annotations
 
 import os
 from functools import lru_cache
-from typing import TYPE_CHECKING, List
+from typing import List
 
-if TYPE_CHECKING:
-    from google import genai
 
 EMBEDDING_MODEL = os.getenv("GEMINI_EMBEDDING_MODEL", "gemini-embedding-001")
 EMBEDDING_DIM = int(os.getenv("GEMINI_EMBEDDING_DIM", "768"))

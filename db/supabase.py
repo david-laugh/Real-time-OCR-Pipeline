@@ -25,10 +25,8 @@ from __future__ import annotations
 
 import os
 from functools import lru_cache
-from typing import TYPE_CHECKING, Any, Dict, List
+from typing import Any, Dict, List
 
-if TYPE_CHECKING:
-    from supabase import Client
 
 OCR_TABLE = os.getenv("SUPABASE_OCR_TABLE", "ocr_documents")
 

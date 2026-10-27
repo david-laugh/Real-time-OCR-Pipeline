@@ -4,7 +4,7 @@
 
 ## 개발자에게 전달할 핵심
 
-OCR 완료 텍스트를 UTF-8 JSON으로 `ocr/text` 토픽에 발행한다. `text`는 필수 문자열, `task_id`는 선택 문자열이며 생략하면 `default`로 저장된다. 같은 작업의 페이지를 같은 `task_id`로 묶고 메시지 하나를 문서 하나로 보낸다. 발행은 QoS 1, retain=false를 사용한다. 수신 서버는 SQLite 저장 후 대시보드 WebSocket으로 알린다. MQTT 저장 완료 응답 토픽과 재전송 중복 방지는 현재 없다. 이미지, 좌표, 신뢰도는 이 MQTT 입력의 범위에 포함되지 않는다. 카메라 이미지는 별도 HTTP `/frame`으로 받아 OCR 처리한다.
+OCR 완료 텍스트를 UTF-8 JSON으로 `ocr/text` 토픽에 발행한다. `text`는 필수 문자열, `task_id`는 선택 문자열이며 생략하면 `default`로 저장된다. 같은 작업의 페이지를 같은 `task_id`로 묶고 메시지 하나를 문서 하나로 보낸다. 발행은 QoS 1, retain=false를 사용한다. 수신 서버는 SQLite 저장 후 대시보드 WebSocket으로 알린다. MQTT 저장 완료 응답 토픽과 재전송 중복 방지는 현재 없다. 이미지, 좌표, 신뢰도는 MQTT 본문 입력 범위에 포함되지 않는다. 카메라 이미지는 별도 /frame HTTP API로 받는다.
 
 ## 폴더와 처리 흐름
 
@@ -20,9 +20,7 @@ OCR 완료 텍스트를 UTF-8 JSON으로 `ocr/text` 토픽에 발행한다. `tex
 | `api/routes.py` | HTTP 입력, 문서·작업 조회, 검색, WebSocket |
 | `static/` | dashboard.html, viewer.html, 기존 report.html |
 
-카메라 `/frame` → OcrSink(EasyOCR → Gemini embedding → Supabase 저장) → mqtt_service → MQTT 브로커 → mqtt_handler → 검증 → Pipeline → SQLite → WebSocket 순서다. 외부 OCR 발행자도 동일한 본문 토픽을 사용할 수 있다. 기존 `static/report.html`은 이전 HTTP 중심 보고서이므로 MQTT 연동은 이 문서를 기준으로 한다.
-
-통합 후 `mqtt_service.py`가 **발행**, `mqtt_handler.py`가 **구독**을 담당한다. Supabase 저장 성공 시 본문을 `MQTT_TOPIC`(기본 `ocr/text`)에 발행하며 카메라 session_id를 task_id로 매핑한다. `ocr/<session_id>/status`는 진행 상태와 120자 미리보기용으로 유지하며, 본문 수신부는 이 상태 토픽을 구독하지 않는다. 저장 실패·빈 OCR·중복 프레임은 본문을 발행하지 않는다. MQTT 본문 전송 실패가 Supabase 저장 성공을 취소하지 않으며, SQLite와 Supabase 간 자동 복구는 없다.
+외부 OCR 발행자 → MQTT 브로커 → 구독 서버 → 검증 → Pipeline → SQLite → WebSocket 순서다. release 통합 버전에는 카메라 /frame 및 EasyOCR → Gemini embedding → Supabase 경로가 있다. Supabase 저장 성공 후 mqtt_service가 전체 본문을 ocr/text에 발행하며 session_id를 task_id로 매핑한다. mqtt_handler는 수신을 담당한다. 기존 ocr/<session_id>/status는 미리보기 및 상태 전용으로 유지한다. 기존 `static/report.html`은 이전 HTTP 중심 보고서이므로 MQTT 연동은 이 문서를 기준으로 한다.
 
 ## 연결 계약
 
@@ -36,9 +34,9 @@ OCR 완료 텍스트를 UTF-8 JSON으로 `ocr/text` 토픽에 발행한다. `tex
 | retain | false 필수. 재구독 시 retain 표시된 메시지는 무시 |
 | 본문 | UTF-8 JSON 객체, 메시지 하나 = 문서 하나 |
 | 장애 재연결 | 연결 오류 후 3초 대기, 다시 연결·구독 |
-| 인증 | 사용자명·비밀번호 설정 가능. MQTT_TLS=1이면 발행·구독 모두 시스템 신뢰 인증서로 TLS 사용 |
+| 인증 | 사용자명·비밀번호 설정 가능. MQTT_TLS=1이면 발행·구독 모두 TLS 사용 |
 
-`mosquitto.conf`는 1883 포트의 익명 접속용 개발 설정이다. 실제 배포 브로커 주소·접근망·인증 방식은 담당자와 확정해야 한다. TLS 브로커에서는 MQTT_TLS=1과 해당 MQTT_PORT(통상 8883)를 함께 설정한다.
+`mosquitto.conf`는 1883 포트의 익명 접속용 개발 설정이다. 실제 배포 브로커 주소·접근망·인증 방식은 담당자와 확정해야 한다. TLS 브로커 사용 시 MQTT_TLS=1 및 해당 포트(통상 8883)를 설정한다.
 
 ## JSON 필드
 
@@ -121,4 +119,4 @@ retain 옵션 `-r`을 붙이지 않는다. 이 명령은 기본 익명 로컬 �
 python -m unittest discover -s tests -v
 ```
 
-2026-10-27 검증 결과: 자동 테스트 7개 통과, Python 구문 검사 및 git diff 공백 검사 통과. 테스트는 메모리 DB와 가짜 MQTT 클라이언트로 정상 한글 저장·알림, 기본값, 잘못된 입력 후 정상 처리, retained 제외, 재전송 중복 특성, 처리 오류 후 구독 지속, HTTP 검증을 확인했다. 샌드박스에서는 asyncio 내부 소켓 생성이 멈춰 승인된 샌드박스 외 실행으로 검증했다. 실제 브로커 연결·장치 송신 검증은 별도로 필요하다.
+테스트는 메모리 DB와 가짜 MQTT 클라이언트로 정상 한글 저장·알림, 기본값, 잘못된 입력 후 정상 처리, retained 제외, 재전송 중복 특성, 처리 오류 후 구독 지속, HTTP 검증을 확인한다. 실제 브로커 연결·장치 송신 검증은 별도로 필요하다.
