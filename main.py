@@ -50,14 +50,6 @@ async def viewer():
     return FileResponse(static_dir / "viewer.html")
 
 
-@app.get("/conveyor")
-async def conveyor():
-    """컨베이어 페이지 (제공 파일)"""
-    path = static_dir / "conveyor.html"
-    if path.exists():
-        return FileResponse(path)
-    return {"error": "conveyor.html not found — static/ 폴더에 넣어주세요"}
-
 
 # ── [SHUTDOWN] ───────────────────────────────────────
 @app.on_event("shutdown")
