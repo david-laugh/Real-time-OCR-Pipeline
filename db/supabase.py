@@ -18,6 +18,8 @@
     );
     create index if not exists ocr_documents_session_idx on ocr_documents (session_id);
 
+검색용 RPC match_ocr_documents는 db/sql/match_ocr_documents.sql (SQL Editor에서 실행).
+
 SDK가 동기식이므로 async 코드에서는 asyncio.to_thread()로 호출할 것.
 """
 
@@ -25,7 +27,7 @@ from __future__ import annotations
 
 import os
 from functools import lru_cache
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from supabase import Client, create_client
 
@@ -64,3 +66,25 @@ def save_ocr_document(
     if not response.data:
         raise RuntimeError(f"Supabase insert into {OCR_TABLE} returned no row")
     return response.data[0]
+
+
+def match_ocr_documents(
+    query_embedding: List[float],
+    match_count: int = 5,
+    session_id: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """유사도 높은 순으로 {id, session_id, title, text, similarity} 목록을 돌려준다.
+    session_id가 None이면 전체 세션에서 찾는다."""
+    response = (
+        get_client()
+        .rpc(
+            "match_ocr_documents",
+            {
+                "query_embedding": query_embedding,
+                "match_count": match_count,
+                "filter_session": session_id,
+            },
+        )
+        .execute()
+    )
+    return response.data or []

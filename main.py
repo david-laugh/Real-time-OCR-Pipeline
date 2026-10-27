@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from api import camera, frame, pair, session
+from api import camera, frame, pair, search, session
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -26,6 +26,7 @@ app.include_router(session.router)
 app.include_router(pair.router)
 # 2번 (OCR):
 # 3번 (대시보드/RAG):
+app.include_router(search.router)
 # ---------------------------------------------------------------------------
 
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
