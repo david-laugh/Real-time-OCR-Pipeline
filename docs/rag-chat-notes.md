@@ -20,6 +20,7 @@ Supabase `ocr_documents`에 쌓인 OCR 텍스트를 근거로 질문에 답하�
 - [x] 시드 스크립트 `scripts/seed_conveyor.py` → `session_id='seed'` 100행 저장 (2026-10-27)
 - [ ] **`<rag-chat>` 조각** ← 다음 할 일, `static/chat/rag-chat.js`
 - [ ] `/chat` 단독 페이지 `static/chat/index.html`
+- [ ] **데모 전: seed 삭제 또는 대시보드 검색 범위를 session-id로 제한** (seed 100행이 실데이터 검색에 섞임)
 - [ ] 로컬 확인 → push, PR(→ release)
 
 ## 흐름
@@ -41,13 +42,13 @@ Supabase `ocr_documents`에 쌓인 OCR 텍스트를 근거로 질문에 답하�
 | 질문 임베딩 | 문서 저장과 같은 모델·차원, task_type만 `RETRIEVAL_QUERY` | 문서는 `RETRIEVAL_DOCUMENT`로 저장됨 |
 | 유사도 검색 | Supabase RPC(pgvector `<=>`) | supabase-py에서 벡터 연산은 RPC로만 가능 |
 | 답변 모델 | `GEMINI_CHAT_MODEL` 기본 `gemini-3.5-flash-lite`, 예비 `GEMINI_CHAT_FALLBACK_MODEL` 기본 `gemini-3.5-flash` | 무료 등급 분당 한도 실측(2026-10-27, 429의 quotaValue): 3.5-flash-lite 15, 3.5-flash 5, 2.5-flash 5. 3.8-flash·flash-latest는 첫 호출 30초 시간 초과(504). 한도는 모델별로 따로 잡힘 |
-| 사용량 한도(429) | 기본 모델 429 → 예비 모델 1회 재시도 → 그래도 429면 HTTP 429 `{detail:"사용량 한도에 걸렸어요. 잠시 후 다시 해 주세요"}`. 임베딩 429도 같은 응답(재시도 없음). 예비 모델을 빈 값으로 두면 재시도 안 함 | 원본 오류(쿼터 정보 등)는 서버 로그에만 |
+| 사용량 한도(429) | 기본 모델 429 → 예비 모델 1회 재시도 → 그래도 429면 HTTP 429 `rate_limited`. 임베딩 429도 같은 응답(재시도 없음). 예비 모델을 빈 값으로 두면 재시도 안 함. Gemini 503은 재시도 없이 503 `unavailable` | 원본 오류(쿼터 정보 등)는 서버 로그에만 |
 | 품질 필터 | 본문 공백 제외 40자 미만이거나 글자 비율 0.4 미만인 행은 중복 제거 전에 제외 | 실데이터 잡음 행 1/4/28자. 시드 최단 문단 59자, 숫자 많은 문단 글자 비율 최저 0.54 |
 | 답변 규칙 | 근거 문서 안에서만 답하고, 없으면 모른다고 답함. 질문 언어로 답함(문서는 영어) | |
 | 2차 중복 제거 | 후보를 `limit×3`개 가져와 본문 단어 집합(3글자 이상 영문) Jaccard ≥ 0.5면 같은 그룹. 그룹의 아무 행과 비슷하면 합류. 본문이 가장 긴 행을 남기고 score는 그룹 최고값 | 같은 카드가 제목만 다르게 저장됨(아래 테스트 기록). OCR 본문은 줄 순서가 섞여 `SequenceMatcher` 0.9로는 하나도 안 걸림 |
 | 출처 제목 대체 | 제목에 글자가 없으면(빈 값, `214` 같은 숫자/기호뿐) 본문에서 글자 위주인 첫 줄(글자 4개 이상, 60% 이상) 앞 40자 | 본문도 카드 번호(`214`, `22 24`)로 시작하는 경우가 있음 |
-| 오류 | `session_id` 형식 오류 400, 검증 오류 422(`limit` 1~20, `query` 1000자), 사용량 한도 429, 그 외 실패 502 `{detail:"검색 중 오류가 났어요. 잠시 후 다시 해 주세요"}` | 원본 오류는 로그에만 |
-| 2번 파일 수정 | `gemini_service.py`: `embed_text(text, task_type="RETRIEVAL_DOCUMENT")` + `generate_text(prompt, system_instruction=None, model=None)` + `is_rate_limit_error(exc)` + `CHAT_FALLBACK_MODEL` / `db/supabase.py`: `match_ocr_documents(query_embedding, match_count=5, session_id=None)` | 최소 수정, 기존 호출부 영향 없음 |
+| 오류 형식 | 모든 오류를 `{answer: 안내 문구, sources: [], error: 코드}`로 응답. 400 `invalid_request`(session_id 형식, 본문 검증 실패: `limit` 1~20, `query` 필수·1000자, JSON 아님), 429 `rate_limited`, 502 `search_failed`(Supabase 등 그 외), 503 `unavailable`(Gemini 503) | pec 대시보드는 `data.answer`만 읽으므로 `{detail}`이면 빈 화면. 422→400 변환은 `/api/search` 라우터(`SearchRoute`)에만 적용, 다른 라우트는 FastAPI 기본 유지. 원본 오류는 로그에만 |
+| 2번 파일 수정 | `gemini_service.py`: `embed_text(text, task_type="RETRIEVAL_DOCUMENT")` + `generate_text(prompt, system_instruction=None, model=None)` + `is_rate_limit_error(exc)`/`is_unavailable_error(exc)` + `CHAT_FALLBACK_MODEL` / `db/supabase.py`: `match_ocr_documents(query_embedding, match_count=5, session_id=None)` | 최소 수정, 기존 호출부 영향 없음 |
 | 시드 | 컨베이어 HTML의 `PASSAGES`(100개, `{title, body[]}`)를 `session_id='seed'`로 저장 | 실제 OCR 없이 검색 테스트 |
 | 시드 재실행 | 전부 임베딩한 뒤 `session_id='seed'` 행을 지우고 새로 저장 | 중복 방지. 임베딩 도중 실패해도 기존 seed는 남음 |
 | 시드 실행 | `python -m scripts.seed_conveyor <html> [--dry-run] [--limit N]`, `.env`는 python-dotenv로 읽음. 임베딩 429면 30초 쉬고 최대 4회 재시도 | `--limit`도 기존 seed 전체를 지우므로 주의 |
@@ -99,6 +100,7 @@ api/search.py                POST /api/search, GET /chat
 main.py                      라우터 등록
 static/chat/rag-chat.js      <rag-chat> 조각
 static/chat/index.html       /chat 테스트 페이지
+tests/test_search_api.py     unittest (python -m unittest discover -s tests -v), 네트워크 없이 가짜 Gemini/Supabase
 scripts/seed_conveyor.py     컨베이어 HTML 경로를 인자로 받아 seed 저장 (python -m scripts.seed_conveyor)
 ```
 
@@ -135,6 +137,7 @@ READING IN TRANSLATION...`으로 시작
 - 2026-10-27, 시드: `--dry-run` 100개 파싱(`\"` 포함 문단 정상), 실행 시 기존 seed 0행 삭제 → 100행 저장, 개수 확인 100
   - `session_id='seed'` 검색: "케틀은 몇 도에서 자동으로 꺼져?" → 100 °C, 1위 Instructions for the New Kettle(0.68) / "종이가 사마르칸트에 도착한 해는?" → 751년, 1위 A Short History of Paper(0.73)
   - 전체 검색에 seed가 섞여도 실데이터 번역 질문 1위는 `ON READING IN TRANSLATION` 유지
+- 2026-10-27, `tests/test_search_api.py` 13개 통과: 성공 응답 그대로 전달 / 400(session_id, limit 0, query 없음·1001자, JSON 아님) / 429 / 503 / 502 모두 `{answer, sources:[], error}` 형식이고 원본 오류 없음 / `/frame`은 기본 422 유지 / 중복 제거·제목 대체·품질 필터·예비 모델 재시도·503 분류
 - 서버 기동: `easyocr` 미설치 시 `api/frame` → `frame_sink` → `ocr_service`의 `import easyocr`에서 기동 실패 확인 → `requirements.txt` 전체 설치 후 정상
 
 ## 남은 일 / 이슈
