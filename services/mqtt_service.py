@@ -8,9 +8,11 @@
   MQTT_TLS              "1"이면 TLS 사용 (클라우드 broker, 보통 포트 8883)
   MQTT_TOPIC_PREFIX     기본 ocr
 
-토픽: <prefix>/<session_id>/status   예) ocr/abc123/status
-      대시보드는 ocr/+/status 를 구독하면 모든 세션을 받는다.
-payload: UTF-8 JSON (frame_sink.OcrSink._notify 참고), QoS 1, retain 없음
+토픽: <prefix>/<session_id>/status     예) ocr/abc123/status    카드 OCR 상태 (frame_sink.OcrSink._notify)
+      <prefix>/<session_id>/sentence   예) ocr/abc123/sentence  카드 본문 문장 1개당 메시지 1건
+                                                              (frame_sink.publish_sentences)
+      대시보드는 ocr/+/status, ocr/+/sentence 를 구독하면 모든 세션을 받는다.
+payload: UTF-8 JSON, QoS 1, retain 없음
 
 연결/재연결은 paho 백그라운드 스레드(loop_start)가 처리하고, publish()는
 전송 큐에 넣고 바로 반환하므로 이벤트 루프를 막지 않는다.
@@ -59,6 +61,10 @@ def get_client() -> mqtt.Client:
 
 def status_topic(session_id: str) -> str:
     return f"{TOPIC_PREFIX}/{session_id}/status"
+
+
+def sentence_topic(session_id: str) -> str:
+    return f"{TOPIC_PREFIX}/{session_id}/sentence"
 
 
 def publish_document(session_id: str, text: str) -> None:
