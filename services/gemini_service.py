@@ -5,7 +5,8 @@ embedding과 RAG 답변 생성에 사용한다 (OCR은 services/ocr_service.py�
   GEMINI_API_KEY          (필수)
   GEMINI_EMBEDDING_MODEL  기본 gemini-embedding-001
   GEMINI_EMBEDDING_DIM    기본 768 (Supabase vector(N) 컬럼 차원과 같아야 함)
-  GEMINI_CHAT_MODEL       기본 gemini-2.5-flash (RAG 답변)
+  GEMINI_CHAT_MODEL           기본 gemini-3.5-flash-lite (RAG 답변)
+  GEMINI_CHAT_FALLBACK_MODEL  기본 gemini-3.5-flash (사용량 한도 429 시 1회 재시도, 빈 값이면 재시도 안 함)
 
 SDK가 동기식이므로 async 코드에서는 asyncio.to_thread()로 호출할 것.
 """
@@ -17,11 +18,12 @@ from functools import lru_cache
 from typing import List, Optional
 
 from google import genai
-from google.genai import types
+from google.genai import errors, types
 
 EMBEDDING_MODEL = os.getenv("GEMINI_EMBEDDING_MODEL", "gemini-embedding-001")
 EMBEDDING_DIM = int(os.getenv("GEMINI_EMBEDDING_DIM", "768"))
-CHAT_MODEL = os.getenv("GEMINI_CHAT_MODEL", "gemini-2.5-flash")
+CHAT_MODEL = os.getenv("GEMINI_CHAT_MODEL", "gemini-3.5-flash-lite")
+CHAT_FALLBACK_MODEL = os.getenv("GEMINI_CHAT_FALLBACK_MODEL", "gemini-3.5-flash")
 
 
 @lru_cache(maxsize=1)
@@ -48,12 +50,21 @@ def embed_text(text: str, task_type: str = "RETRIEVAL_DOCUMENT") -> List[float]:
     return list(response.embeddings[0].values)
 
 
-def generate_text(prompt: str, system_instruction: Optional[str] = None) -> str:
+def generate_text(
+    prompt: str,
+    system_instruction: Optional[str] = None,
+    model: Optional[str] = None,
+) -> str:
     response = get_client().models.generate_content(
-        model=CHAT_MODEL,
+        model=model or CHAT_MODEL,
         contents=prompt,
         config=types.GenerateContentConfig(system_instruction=system_instruction),
     )
     if not response.text:
         raise RuntimeError("Gemini returned an empty answer")
     return response.text.strip()
+
+
+def is_rate_limit_error(exc: BaseException) -> bool:
+    """사용량 한도 초과(429 RESOURCE_EXHAUSTED) 여부."""
+    return isinstance(exc, errors.APIError) and exc.code == 429

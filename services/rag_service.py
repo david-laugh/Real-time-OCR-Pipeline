@@ -7,6 +7,10 @@
 (예: "READING IN TRANSLATION" / "{G IN TRANSLATION") 검색 결과끼리 본문이
 매우 비슷하면 본문이 더 긴 쪽 하나만 남긴다. OCR 본문은 줄 순서가 섞이고
 오타가 많아 순서 기반(SequenceMatcher)이 아니라 단어 집합 Jaccard로 비교한다.
+본문이 너무 짧거나 숫자·기호 위주인 OCR 조각은 검색 결과에서 뺀다.
+
+답변 모델이 사용량 한도(429)에 걸리면 예비 모델로 1회 재시도하고,
+그래도 걸리면 RateLimitedError를 올린다 (원본 오류는 로그에만 남김).
 """
 
 from __future__ import annotations
@@ -29,6 +33,10 @@ DUPLICATE_JACCARD = 0.5
 # 중복 제거 후에도 limit개를 채울 수 있도록 넉넉히 가져온다
 CANDIDATE_FACTOR = 3
 MAX_CONTEXT_CHARS = 2000
+# 품질 필터 (공백 제외 글자 수 기준). 실데이터 잡음 행은 1/4/28자, 시드 문단 최단 59자.
+# 숫자 많은 시드 문단(Access Log 등)의 글자 비율이 0.54까지 내려가므로 0.4로 둔다.
+MIN_TEXT_CHARS = 40
+MIN_LETTER_RATIO = 0.4
 
 NO_RESULT_ANSWER = "저장된 문서에서 관련 내용을 찾을 수 없습니다."
 
@@ -40,8 +48,15 @@ SYSTEM_INSTRUCTION = (
     "and cite the documents you used like [1], [2]."
 )
 
+
+
+class RateLimitedError(RuntimeError):
+    """Gemini 사용량 한도 초과 (예비 모델까지 실패)."""
+
+
 _LETTER_RE = re.compile(r"[^\W\d_]")
 _WORD_RE = re.compile(r"[a-z]{3,}")
+_SPACE_RE = re.compile(r"\s+")
 
 
 async def search(query: str, limit: int = 5, session_id: Optional[str] = None) -> Dict[str, Any]:
@@ -50,17 +65,48 @@ async def search(query: str, limit: int = 5, session_id: Optional[str] = None) -
         return {"answer": "", "sources": []}
 
     # google-genai / supabase 동기 호출 → 이벤트 루프를 막지 않도록 스레드로
-    embedding = await asyncio.to_thread(gemini_service.embed_text, query, "RETRIEVAL_QUERY")
+    try:
+        embedding = await asyncio.to_thread(gemini_service.embed_text, query, "RETRIEVAL_QUERY")
+    except Exception as exc:
+        if gemini_service.is_rate_limit_error(exc):
+            logger.warning("embedding rate limited: %s", exc)
+            raise RateLimitedError() from exc
+        raise
     rows = await asyncio.to_thread(
         supabase.match_ocr_documents, embedding, limit * CANDIDATE_FACTOR, session_id
     )
-    docs = dedupe_by_text(rows)[:limit]
+    docs = dedupe_by_text([r for r in rows if is_quality_text(r.get("text") or "")])[:limit]
     if not docs:
         return {"answer": NO_RESULT_ANSWER, "sources": []}
 
-    prompt = build_prompt(query, docs)
-    answer = await asyncio.to_thread(gemini_service.generate_text, prompt, SYSTEM_INSTRUCTION)
+    answer = await generate_answer(build_prompt(query, docs))
     return {"answer": answer, "sources": [to_source(d) for d in docs]}
+
+
+async def generate_answer(prompt: str) -> str:
+    """기본 모델로 답하고, 429면 예비 모델로 1회 재시도한다."""
+    models = [gemini_service.CHAT_MODEL]
+    fallback = gemini_service.CHAT_FALLBACK_MODEL
+    if fallback and fallback != gemini_service.CHAT_MODEL:
+        models.append(fallback)
+    for model in models:
+        try:
+            return await asyncio.to_thread(
+                gemini_service.generate_text, prompt, SYSTEM_INSTRUCTION, model
+            )
+        except Exception as exc:
+            if not gemini_service.is_rate_limit_error(exc):
+                raise
+            logger.warning("answer model %s rate limited: %s", model, exc)
+    raise RateLimitedError()
+
+
+def is_quality_text(text: str) -> bool:
+    """너무 짧거나(예: "4", "4uty") 글자보다 숫자·기호가 많은 OCR 조각이면 False."""
+    visible = len(_SPACE_RE.sub("", text))
+    if visible < MIN_TEXT_CHARS:
+        return False
+    return len(_LETTER_RE.findall(text)) >= visible * MIN_LETTER_RATIO
 
 
 def dedupe_by_text(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
