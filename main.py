@@ -15,7 +15,7 @@ logging.basicConfig(level=logging.INFO)
 
 from api import camera, frame, pair, routes, search, session
 from db.meta_store import MetaStore
-from services import mqtt_service
+from services import frame_sink, mqtt_service
 from services.dedup import DedupFilter
 from services.frame_queue import get_frame_queue
 from services.mqtt_handler import MqttHandler
@@ -39,9 +39,11 @@ async def lifespan(app: FastAPI):
     )
     try:
         await listener.start()
+        frame_sink.startup()
         yield
     finally:
         await get_frame_queue().stop()
+        await frame_sink.shutdown()
         mqtt_service.close()
         await listener.stop()
         store.close()

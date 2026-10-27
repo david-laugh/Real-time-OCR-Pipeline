@@ -6,7 +6,11 @@ python-multipart==0.0.20
 google-genai==2.33.0
 supabase==2.33.0
 paho-mqtt==2.1.0
-easyocr==1.7.2
+rapidocr-onnxruntime==1.4.4
+opencv-python>=4.8
+numpy>=1.24,<3
+spacy>=3.7,<4
+# Optional, better sentence boundaries: python -m spacy download en_core_web_sm
 
 aiomqtt>=2.5,<3
 pydantic>=2,<3
