@@ -11,6 +11,7 @@ OCR 엔진 비교 벤치마크 (파일 하나, 서브커맨드 CLI)
   python ocr_bench.py run    --engines easyocr tesseract rapidocr
   python ocr_bench.py score
   python ocr_bench.py dedup             # 중복 저장 방지 시뮬레이션
+  python ocr_bench.py track basic.mp4 fast.mp4 lowcontrast.mp4 --engine rapidocr   # 카드 추적 + 가운데 선 통과 시 1회 읽기
   python ocr_bench.py report --out docs/ocr-engine-comparison.md   # 서술형 보고서
   python ocr_bench.py send --engine rapidocr --api http://localhost:8000   # 선택: 뷰어에서 보기
 
@@ -281,6 +282,151 @@ def cmd_dedup(a):
     (WORK / "dedup.json").write_text(json.dumps(result, ensure_ascii=False, indent=1), encoding="utf-8")
 
 
+
+# ---------------------------------------------------------------- track (카드 박스 추적 + 가운데 선 통과 시 1회 읽기)
+def _runs(mask, minlen):
+    out, s = [], None
+    for i, v in enumerate(list(mask) + [False]):
+        if v and s is None:
+            s = i
+        if not v and s is not None:
+            if i - s >= minlen:
+                out.append((s, i))
+            s = None
+    return out
+
+
+def detect_cards(frame, work_w=960):
+    """어두운 배경 위의 밝은 카드를 학습 없이 찾는다 (세로 띠 밝기 투영).
+    위쪽 조명 반사로 카드끼리 붙어 보이는 것을 피하려고 화면 중간~아래 띠의 밝기로 카드 열을 나눈다.
+    나중에 YOLO 카드 검출 모델이 생기면 이 함수만 바꾸면 된다. 반환: [(x0, y0, x1, y1), ...] 원본 좌표"""
+    import cv2, numpy as np
+    H0, W0 = frame.shape[:2]
+    k = W0 / work_w
+    g = cv2.cvtColor(cv2.resize(frame, (work_w, int(H0 / k))), cv2.COLOR_BGR2GRAY)
+    g = cv2.GaussianBlur(g, (5, 5), 0)
+    H = g.shape[0]
+    lo, hi = np.percentile(g, [10, 90])
+    thr = (lo + hi) / 2
+    col = np.median(g[int(.45 * H):int(.75 * H)], axis=0)
+    boxes = []
+    for x0, x1 in _runs(col > thr, int(work_w * 0.08)):
+        row = np.median(g[:, x0:x1], axis=1)
+        rr = _runs(row > thr, int(H * 0.3))
+        if rr:
+            y0, y1 = max(rr, key=lambda r: r[1] - r[0])
+            boxes.append((int(x0 * k), int(y0 * k), int(x1 * k), int(y1 * k)))
+    return boxes
+
+
+class CardTracker:
+    """카드 박스에 번호(ID)를 붙여 프레임 사이에서 따라간다.
+    카드 중심이 화면 가운데 세로선을 넘는 순간 한 번만 '읽기' 이벤트를 낸다 (사람 수 세기의 라인 카운팅과 같은 방식).
+    이미 읽은 ID는 다시 읽지 않는다 = '읽고 지우기'."""
+    def __init__(self, line_x, max_jump, max_missing=15):
+        self.line_x, self.max_jump, self.max_missing = line_x, max_jump, max_missing
+        self.tracks, self.next_id = {}, 1
+
+    def update(self, boxes):
+        events, used = [], set()
+        for b in boxes:
+            cx = (b[0] + b[2]) / 2
+            best = min(((abs(t["cx"] - cx), tid) for tid, t in self.tracks.items() if tid not in used), default=None)
+            if best and best[0] < self.max_jump:
+                tid = best[1]
+                t = self.tracks[tid]
+                crossed = (t["cx"] - self.line_x) * (cx - self.line_x) <= 0 and t["cx"] != cx
+                t.update(cx=cx, box=b, missing=0)
+                if crossed and not t["read"]:
+                    t["read"] = True
+                    events.append((tid, b))
+            else:
+                tid = self.next_id; self.next_id += 1
+                self.tracks[tid] = {"cx": cx, "box": b, "missing": 0, "read": False}
+            used.add(tid)
+        for tid in list(self.tracks):
+            if tid not in used:
+                self.tracks[tid]["missing"] += 1
+                if self.tracks[tid]["missing"] > self.max_missing:
+                    del self.tracks[tid]
+        return events
+
+
+def cmd_track(a):
+    import cv2
+    from rapidfuzz import fuzz, process
+    from rapidfuzz.distance import Levenshtein
+    passages = json.loads((WORK / "truth.json").read_text(encoding="utf-8"))
+    truth = [norm(p["title"] + " " + " ".join(p["body"])).lower() for p in passages]
+    eng = make_engine(a.engine)
+    out_dir = WORK / "track"; out_dir.mkdir(parents=True, exist_ok=True)
+    summary = {}
+    for v in a.videos:
+        cap = cv2.VideoCapture(v)
+        W = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        tr = CardTracker(line_x=W * a.line, max_jump=W * 0.06)
+        dd = Deduper(threshold=85)
+        reads, i, t_ocr = [], 0, 0.0
+        pending = {}   # 선을 넘은 카드: 이후 몇 프레임 중 가장 선명한 장면을 골라 한 번만 읽는다
+
+        def ocr_crop(tid, info):
+            nonlocal t_ocr
+            path = out_dir / f"{Path(v).stem}__f{info['frame']:05d}_id{tid}.jpg"
+            cv2.imwrite(str(path), info["crop"])
+            t0 = time.perf_counter()
+            text = " ".join(eng(str(path)))
+            t_ocr += time.perf_counter() - t0
+            reads.append({"frame": info["frame"], "id": tid, "text": text, "dedup": dd.check(text)[0]})
+
+        while True:
+            ok, frame = cap.read()
+            if not ok:
+                break
+            boxes = detect_cards(frame)
+            for tid, _ in tr.update(boxes):
+                pending[tid] = {"left": a.pick, "sharp": -1, "crop": None, "frame": i}
+            for tid in list(pending):
+                t = tr.tracks.get(tid)
+                if t and t["missing"] == 0:
+                    x0, y0, x1, y1 = t["box"]; m = 6
+                    crop = frame[max(0, y0 - m):y1 + m, max(0, x0 - m):x1 + m]
+                    sh = cv2.Laplacian(cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY), cv2.CV_64F).var()
+                    if sh > pending[tid]["sharp"]:
+                        pending[tid].update(sharp=sh, crop=crop, frame=i)
+                pending[tid]["left"] -= 1
+                if pending[tid]["left"] <= 0 or not t:
+                    if pending[tid]["crop"] is not None:
+                        ocr_crop(tid, pending[tid])
+                    del pending[tid]
+            i += 1
+        for tid, info in pending.items():
+            if info["crop"] is not None:
+                ocr_crop(tid, info)
+        # 채점: 읽은 카드마다 가장 비슷한 정답 지문을 찾는다 (평가용으로만 정답 사용)
+        seen, dup, chars, err = set(), 0, 0, 0
+        for r in reads:
+            t = norm(r["text"]).lower()
+            best = process.extractOne(t, truth, scorer=fuzz.partial_ratio) if len(t) >= 8 else None
+            r["passage"] = best[2] if best and best[1] >= 60 else None
+            if r["passage"] is None:
+                continue
+            if r["passage"] in seen:
+                dup += 1
+            seen.add(r["passage"])
+            al = fuzz.partial_ratio_alignment(t, truth[r["passage"]])
+            ref = truth[r["passage"]][al.dest_start:al.dest_end]
+            chars += len(ref); err += Levenshtein.distance(t, ref)
+        name = Path(v).stem
+        summary[name] = {"프레임수": i, "OCR_호출": len(reads), "고유_지문": len(seen), "중복_읽기": dup,
+                         "실패_읽기": sum(1 for r in reads if r["passage"] is None),
+                         "CER": round(err / chars, 4) if chars else None, "OCR_총초": round(t_ocr, 1)}
+        (out_dir / f"{name}.json").write_text(json.dumps(reads, ensure_ascii=False, indent=1), encoding="utf-8")
+        s_ = summary[name]
+        print(f"{name}: {i}프레임 중 OCR {s_['OCR_호출']}번 -> 고유 지문 {s_['고유_지문']}개, 중복 {s_['중복_읽기']}, "
+              f"실패 {s_['실패_읽기']}, CER {s_['CER']}, OCR 총 {s_['OCR_총초']}초")
+    (WORK / f"track_{a.engine}.json").write_text(json.dumps(summary, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
 # ---------------------------------------------------------------- report (서술형)
 def cmd_report(a):
     s = json.loads((WORK / "scores.json").read_text(encoding="utf-8"))
@@ -368,6 +514,11 @@ def main():
     x = sp.add_parser("score"); x.add_argument("--min-len", type=int, default=8)
     x.add_argument("--min-sim", type=float, default=60.0); x.set_defaults(f=cmd_score)
     x = sp.add_parser("dedup"); x.add_argument("--threshold", type=float, default=85.0); x.set_defaults(f=cmd_dedup)
+    x = sp.add_parser("track"); x.add_argument("videos", nargs="+")
+    x.add_argument("--engine", default="rapidocr")
+    x.add_argument("--line", type=float, default=0.5, help="읽기 선 위치 (화면 너비 비율, 0.5=가운데)")
+    x.add_argument("--pick", type=int, default=8, help="선 통과 후 이 프레임 수 안에서 가장 선명한 장면을 읽음")
+    x.set_defaults(f=cmd_track)
     x = sp.add_parser("report"); x.add_argument("--out", default="docs/ocr-engine-comparison.md"); x.set_defaults(f=cmd_report)
     x = sp.add_parser("send"); x.add_argument("--engine", required=True)
     x.add_argument("--api", default="http://localhost:8000"); x.add_argument("--limit", type=int, default=0)
