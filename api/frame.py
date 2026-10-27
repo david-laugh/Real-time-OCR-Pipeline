@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
 from services.frame_queue import FrameQueue, get_frame_queue
 from services.frame_sink import FrameSink, get_frame_sink
+from services.session_registry import SessionRegistry, get_session_registry
 
 router = APIRouter(tags=["mobile-camera"])
 
@@ -25,6 +26,7 @@ async def receive_frame(
     frame: UploadFile = File(...),
     sink: FrameSink = Depends(get_frame_sink),
     queue: FrameQueue = Depends(get_frame_queue),
+    registry: SessionRegistry = Depends(get_session_registry),
 ) -> dict:
     if not SESSION_ID_RE.match(session_id):
         raise HTTPException(status_code=400, detail="invalid session_id")
@@ -35,5 +37,6 @@ async def receive_frame(
     if not data.startswith(JPEG_MAGIC):
         raise HTTPException(status_code=415, detail="frame must be JPEG")
 
+    registry.mark_frame(session_id)   # Pairing status: frame arrived, regardless of OCR outcome
     dropped = queue.submit(session_id, data, sink)
     return {"ok": True, "queued": True, "dropped": dropped}
