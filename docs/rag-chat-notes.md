@@ -23,7 +23,8 @@ Supabase `ocr_documents`에 쌓인 OCR 텍스트를 근거로 질문에 답하�
 - [ ] **데모 전: seed 삭제 또는 대시보드 검색 범위를 session-id로 제한** (seed 100행이 실데이터 검색에 섞임)
 - [x] `origin/release` beeabdf(PR #4~#6: MQTT 대시보드·SQLite FTS5 검색·대시보드 QR) 머지, 충돌 해결(`main.py`, `gemini_service.py`)
 - [x] RAG 경로를 `POST /api/rag/search`로 변경 (release의 FTS5 `POST /api/search`와 겹침, 2026-10-27 결정)
-- [ ] **push, PR(→ release)** ← 다음 할 일
+- [x] push, PR(→ release): https://github.com/david-laugh/Real-time-OCR-Pipeline/pull/8
+- [ ] **팀 리뷰 → 머지** ← 다음 할 일
 
 ## 흐름
 ```
