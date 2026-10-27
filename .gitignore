@@ -15,10 +15,3 @@ tmp_frames/
 Thumbs.db
 .vscode/
 .idea/
-data/
-.merge-backups/
-.test-deps/
-.broker-deps/
-*.egg-info/
-dist/
-build/
