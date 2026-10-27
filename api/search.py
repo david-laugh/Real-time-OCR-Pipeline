@@ -1,11 +1,19 @@
-"""POST /api/search: RAG question answering over stored OCR documents (pec response format)."""
+"""POST /api/search: RAG question answering over stored OCR documents (pec response format).
+
+Success: 200 {answer, sources:[{doc_id, title, preview, score}]}
+Errors keep the same shape so the pec dashboard can always read data.answer:
+    {answer: <user message>, sources: [], error: <code>} with HTTP 400/429/502/503
+"""
 
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import Any, Callable, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Request, Response
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from fastapi.routing import APIRoute
 from pydantic import BaseModel, Field
 
 from api.frame import SESSION_ID_RE
@@ -13,7 +21,36 @@ from services import rag_service
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["rag-chat"])
+# (HTTP status, error code, message shown in the chat)
+INVALID_REQUEST = (400, "invalid_request", "질문 형식이 올바르지 않아요. 질문과 세션 ID를 확인해 주세요")
+RATE_LIMITED = (429, "rate_limited", "사용량 한도에 걸렸어요. 잠시 후 다시 해 주세요")
+SEARCH_FAILED = (502, "search_failed", "검색 중 오류가 났어요. 잠시 후 다시 해 주세요")
+UNAVAILABLE = (503, "unavailable", "AI 서버가 바빠요. 잠시 후 다시 해 주세요")
+
+
+def error_response(error: tuple) -> JSONResponse:
+    status, code, message = error
+    return JSONResponse(status_code=status, content={"answer": message, "sources": [], "error": code})
+
+
+class SearchRoute(APIRoute):
+    """Return body validation errors (FastAPI default 422 {detail}) as 400 in the search format.
+    Scoped to this router only, so other routes keep FastAPI's default."""
+
+    def get_route_handler(self) -> Callable[[Request], Any]:
+        handler = super().get_route_handler()
+
+        async def route_handler(request: Request) -> Response:
+            try:
+                return await handler(request)
+            except RequestValidationError as exc:
+                logger.info("invalid search request: %s", exc.errors())
+                return error_response(INVALID_REQUEST)
+
+        return route_handler
+
+
+router = APIRouter(tags=["rag-chat"], route_class=SearchRoute)
 
 
 class SearchInput(BaseModel):
@@ -22,19 +59,17 @@ class SearchInput(BaseModel):
     session_id: Optional[str] = None
 
 
-RATE_LIMITED_MESSAGE = "사용량 한도에 걸렸어요. 잠시 후 다시 해 주세요"
-FAILED_MESSAGE = "검색 중 오류가 났어요. 잠시 후 다시 해 주세요"
-
-
 @router.post("/api/search")
-async def search_documents(body: SearchInput) -> dict:
+async def search_documents(body: SearchInput) -> Any:
     if body.session_id is not None and not SESSION_ID_RE.match(body.session_id):
-        raise HTTPException(status_code=400, detail="invalid session_id")
+        return error_response(INVALID_REQUEST)
     # 원본 오류(키·쿼터 정보 포함)는 서버 로그에만 남기고 응답에는 담지 않는다
     try:
         return await rag_service.search(body.query, limit=body.limit, session_id=body.session_id)
-    except rag_service.RateLimitedError as exc:
-        raise HTTPException(status_code=429, detail=RATE_LIMITED_MESSAGE) from exc
-    except Exception as exc:
+    except rag_service.RateLimitedError:
+        return error_response(RATE_LIMITED)
+    except rag_service.UnavailableError:
+        return error_response(UNAVAILABLE)
+    except Exception:
         logger.exception("rag search failed")
-        raise HTTPException(status_code=502, detail=FAILED_MESSAGE) from exc
+        return error_response(SEARCH_FAILED)

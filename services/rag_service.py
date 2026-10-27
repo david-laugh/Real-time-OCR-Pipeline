@@ -10,7 +10,8 @@
 본문이 너무 짧거나 숫자·기호 위주인 OCR 조각은 검색 결과에서 뺀다.
 
 답변 모델이 사용량 한도(429)에 걸리면 예비 모델로 1회 재시도하고,
-그래도 걸리면 RateLimitedError를 올린다 (원본 오류는 로그에만 남김).
+그래도 걸리면 RateLimitedError를 올린다. Gemini 503은 UnavailableError
+(원본 오류는 로그에만 남김).
 """
 
 from __future__ import annotations
@@ -54,6 +55,10 @@ class RateLimitedError(RuntimeError):
     """Gemini 사용량 한도 초과 (예비 모델까지 실패)."""
 
 
+class UnavailableError(RuntimeError):
+    """Gemini 일시적 사용 불가 (503)."""
+
+
 _LETTER_RE = re.compile(r"[^\W\d_]")
 _WORD_RE = re.compile(r"[a-z]{3,}")
 _SPACE_RE = re.compile(r"\s+")
@@ -71,6 +76,9 @@ async def search(query: str, limit: int = 5, session_id: Optional[str] = None) -
         if gemini_service.is_rate_limit_error(exc):
             logger.warning("embedding rate limited: %s", exc)
             raise RateLimitedError() from exc
+        if gemini_service.is_unavailable_error(exc):
+            logger.warning("embedding unavailable: %s", exc)
+            raise UnavailableError() from exc
         raise
     rows = await asyncio.to_thread(
         supabase.match_ocr_documents, embedding, limit * CANDIDATE_FACTOR, session_id
@@ -95,6 +103,9 @@ async def generate_answer(prompt: str) -> str:
                 gemini_service.generate_text, prompt, SYSTEM_INSTRUCTION, model
             )
         except Exception as exc:
+            if gemini_service.is_unavailable_error(exc):
+                logger.warning("answer model %s unavailable: %s", model, exc)
+                raise UnavailableError() from exc
             if not gemini_service.is_rate_limit_error(exc):
                 raise
             logger.warning("answer model %s rate limited: %s", model, exc)

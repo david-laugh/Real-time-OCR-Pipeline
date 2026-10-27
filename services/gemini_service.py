@@ -68,3 +68,8 @@ def generate_text(
 def is_rate_limit_error(exc: BaseException) -> bool:
     """사용량 한도 초과(429 RESOURCE_EXHAUSTED) 여부."""
     return isinstance(exc, errors.APIError) and exc.code == 429
+
+
+def is_unavailable_error(exc: BaseException) -> bool:
+    """모델 과부하 등 일시적 사용 불가(503 UNAVAILABLE) 여부."""
+    return isinstance(exc, errors.APIError) and exc.code == 503
