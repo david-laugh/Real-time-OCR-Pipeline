@@ -1,4 +1,5 @@
-# 팀 Python 버전: 3.10 (아래 버전은 3.10에서 설치 가능한 것으로 고정)
+# Team Python version: 3.10 (pinned versions install on 3.10)
+# Keep this file ASCII-only: pip 23 on Korean Windows reads it as cp949.
 fastapi==0.115.12
 uvicorn[standard]==0.34.3
 python-multipart==0.0.20
