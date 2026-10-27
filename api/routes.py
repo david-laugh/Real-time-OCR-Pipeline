@@ -15,6 +15,7 @@ import json
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from services.ocr_message import OcrMessage
 
 router = APIRouter()
 
@@ -31,9 +32,7 @@ def init(pipeline, search_service, meta_store):
     _store = meta_store
 
 
-class TextInput(BaseModel):
-    text: str
-    task_id: str = "default"
+TextInput = OcrMessage
 
 
 class SearchInput(BaseModel):
@@ -47,13 +46,13 @@ async def process_text(body: TextInput):
     if result is None:
         return {"status": "skipped", "reason": "duplicate or too short"}
 
-    await _broadcast({"type": "new_document", "data": result})
-    await _broadcast({"type": "stats", "data": {"total": _store.get_count()}})
+    await broadcast({"type": "new_document", "data": result})
+    await broadcast({"type": "stats", "data": {"total": _store.get_count()}})
 
     return {"status": "stored", **result}
 
 
-async def _broadcast(payload: dict):
+async def broadcast(payload: dict):
     msg = json.dumps(payload)
     dead: list[WebSocket] = []
     for ws in _dashboard_clients:

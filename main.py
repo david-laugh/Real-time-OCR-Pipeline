@@ -2,12 +2,18 @@
 ============================================================
 [FILE] main.py
 [역할] FastAPI 앱 진입점 — 서버 기동, 모듈 초기화, 라우터 등록
-[실행] uvicorn main:app --reload --host 0.0.0.0 --port 8000
+[실행] python run.py
 ============================================================
 """
 
+import logging
+import os
 from pathlib import Path
 from fastapi import FastAPI
+from dotenv import load_dotenv
+
+load_dotenv()
+logging.basicConfig(level=logging.INFO)
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
@@ -15,7 +21,8 @@ from db.meta_store import MetaStore
 from services.dedup import DedupFilter
 from services.pipeline import Pipeline
 from services.search import SearchService
-from api.routes import router, init as init_routes
+from api.routes import router, init as init_routes, broadcast
+from services.mqtt_handler import MqttHandler
 
 # ── [APP] ────────────────────────────────────────────
 app = FastAPI(title="OCR Pipeline Dashboard")
@@ -27,6 +34,16 @@ pipeline = Pipeline(meta_store=meta_store, dedup=dedup)
 search_service = SearchService(meta_store=meta_store)
 
 init_routes(pipeline, search_service, meta_store)
+
+mqtt = MqttHandler(
+    pipeline=pipeline,
+    broadcast=broadcast,
+    host=os.getenv("MQTT_HOST", "localhost"),
+    port=int(os.getenv("MQTT_PORT", "1883")),
+    topic=os.getenv("MQTT_TOPIC", "ocr/text"),
+    username=os.getenv("MQTT_USERNAME") or None,
+    password=os.getenv("MQTT_PASSWORD") or None,
+)
 
 # ── [ROUTES] ─────────────────────────────────────────
 app.include_router(router)
@@ -49,7 +66,13 @@ async def viewer():
 
 
 
-# ── [SHUTDOWN] ───────────────────────────────────────
+# ── [LIFECYCLE] ──────────────────────────────────────
+@app.on_event("startup")
+async def startup():
+    await mqtt.start()
+
+
 @app.on_event("shutdown")
-def shutdown():
+async def shutdown():
+    await mqtt.stop()
     meta_store.close()

@@ -19,6 +19,8 @@ class Pipeline:
 
     def process(self, text: str, task_id: str = "default") -> dict | None:
         text = text.strip()
+        if not text:
+            return None
         if self._dedup.is_duplicate(text):
             return None
 
@@ -38,3 +40,6 @@ class Pipeline:
             "char_count": len(text),
             "timestamp": now,
         }
+
+    def get_count(self) -> int:
+        return self._store.get_count()
