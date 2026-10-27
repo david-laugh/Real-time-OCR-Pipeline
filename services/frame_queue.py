@@ -55,6 +55,11 @@ class FrameQueue:
     def pending_count(self, session_id: str) -> int:
         return len(self._pending.get(session_id, ()))
 
+    async def stop(self) -> None:
+        """Finish accepted frames before closing MQTT and storage resources."""
+        if self._workers:
+            await asyncio.gather(*list(self._workers.values()), return_exceptions=True)
+
 
 _queue = FrameQueue()
 

@@ -68,7 +68,7 @@ docker run -d --name ocr-mqtt -p 1883:1883 eclipse-mosquitto:2 mosquitto -c /mos
 ## 2. 서버 실행
 
 ```powershell
-uvicorn main:app --host 0.0.0.0 --port 8000 --env-file .env
+python run.py
 ```
 
 ## 3. 테스트
@@ -118,7 +118,30 @@ cloudflared tunnel --url http://localhost:8000
 ```
 
 `document_id`, `created_at`은 `stored`에만 있다. 본문 전체와 embedding은 Supabase에서 조회한다.
-브라우저 대시보드는 일반 MQTT(1883)에 직접 붙을 수 없으므로 broker의 WebSocket 포트(예: 9001)와 mqtt.js를 사용한다.
+통합 대시보드는 서버의 `/ws/dashboard`에 연결한다. 브라우저용 MQTT 포트를 따로 열 필요가 없다.
+
+### 통합 대시보드와 본문 전달
+
+`새 폴더`의 대시보드 코드를 저장소 루트에 통합했다. 카메라 `/camera`, 업로드 `/frame`, GitHub Pages의 `index.html`은 유지한다.
+
+```text
+카메라 → /frame → EasyOCR → Gemini embedding → Supabase
+                                              ↓ 저장 성공
+                           mqtt_service → ocr/text {text, task_id=session_id}
+                                              ↓ MQTT broker
+                           mqtt_handler → SQLite → /ws/dashboard
+```
+
+- `http://localhost:8000/`: 실시간 대시보드
+- `http://localhost:8000/viewer`: 문서 뷰어/검색
+- `MQTT_TOPIC` 기본값 `ocr/text`: 본문 발행·구독에 공통 적용
+- `ocr/<session_id>/status`: 기존 진행 상태 이벤트를 그대로 유지
+- `.env.example`을 `.env`로 복사한 뒤 기존 Gemini/Supabase/MQTT 설정을 입력
+- Supabase는 원본/embedding 저장소, SQLite는 대시보드 본문/FTS 검색 저장소다. 두 저장소 사이의 원자적 동기화나 자동 복구는 없다.
+- MQTT 전송 실패는 이미 성공한 Supabase 저장을 취소하지 않는다. 대시보드의 복구·재전송 멱등성은 별도 구현이 필요하다.
+- Windows 이벤트 루프 호환을 위해 `python run.py`로 단일 프로세스를 실행한다.
+
+상세 계약과 검증 범위: [MQTT 명세](docs/MQTT_OCR_SPEC.md), [통합 기록](docs/INTEGRATION.md).
 
 ## 5. 파일 구성
 

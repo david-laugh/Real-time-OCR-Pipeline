@@ -61,6 +61,21 @@ def status_topic(session_id: str) -> str:
     return f"{TOPIC_PREFIX}/{session_id}/status"
 
 
+def publish_document(session_id: str, text: str) -> None:
+    """Send full OCR text to the dashboard consumer after Supabase storage."""
+    publish(os.getenv("MQTT_TOPIC", "ocr/text"), {"text": text, "task_id": session_id})
+
+
+def close() -> None:
+    """Stop the publisher's network thread on server shutdown."""
+    global _client
+    with _lock:
+        if _client is not None:
+            _client.disconnect()
+            _client.loop_stop()
+            _client = None
+
+
 def publish(topic: str, payload: Dict[str, Any]) -> None:
     body = json.dumps(payload, ensure_ascii=False)
     info = get_client().publish(topic, body, qos=QOS)
