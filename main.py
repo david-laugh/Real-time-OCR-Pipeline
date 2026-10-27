@@ -15,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
 from api import camera, frame
+<<<<<<< HEAD
 from api import routes
 from db.meta_store import MetaStore
 from services.dedup import DedupFilter
@@ -23,6 +24,8 @@ from services.search import SearchService
 from services.mqtt_handler import MqttHandler
 from services import mqtt_service
 from services.frame_queue import get_frame_queue
+=======
+>>>>>>> parent of c304d08 (Merge pull request #3 from david-laugh/feature/qr-pairing)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -61,8 +64,6 @@ app.add_middleware(
 # 1번 (모바일 카메라): /camera, /frame
 app.include_router(camera.router)
 app.include_router(frame.router)
-app.include_router(session.router)
-app.include_router(pair.router)
 # 2번 (OCR):
 # 3번 (대시보드/RAG):
 # ---------------------------------------------------------------------------
