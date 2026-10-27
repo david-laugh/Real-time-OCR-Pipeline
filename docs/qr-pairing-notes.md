@@ -40,7 +40,7 @@ PC 대시보드에 QR을 띄우고, 휴대폰이 QR을 찍으면 카메라 페�
 - 현재 루트 `index.html`에는 진단 표시 요소 `<pre id="debug">`가 없음 → 그 페이지를 `?debug=1`로 열면 오류. 평소 사용에는 영향 없음
 - 루트 `index.html`은 `camera.css`/`camera.js`를 `?v=` 없이 불러옴 → 캐시 때문에 옛 버전이 뜰 수 있음
 - **머지 순서 제안: PR #1(카메라, 머지 완료) → `feature/ocr` → QR(`feature/qr-pairing`)**
-  - `feature/ocr`과 QR 브랜치가 모두 `main.py`의 같은 영역(라우터 등록 부근)을 수정 → QR을 나중에 머지하며 충돌 해결
+  - `feature/ocr`과 QR 브랜치가 모두 `main.py`를 수정하지만 수정 줄이 겹치지 않음 → 머지 시뮬레이션에서 충돌 없음(2026-10-27 기준). `feature/ocr`이 바뀌면 다시 확인
 - 대시보드는 `<qr-pairing>`의 `session-change` 이벤트로 현재 세션 ID를 받아 MQTT `ocr/<session_id>/status` 구독에 쓰면 됨
 
 ## 파일
