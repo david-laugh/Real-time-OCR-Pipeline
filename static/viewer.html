@@ -1,0 +1,927 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>OCR Pipeline — Document Viewer</title>
+<!-- ============================================================
+     [FILE] static/viewer.html
+     [역할] 문서 뷰어 — 카드형 탐색 + 전문검색 + 상세 보기
+     [의존] /api/documents, /api/documents/{doc_id}, /api/search, /ws/dashboard
+     [합칠 때] OCR 원본 이미지 표시 영역 추가, 카메라 세션별 필터 추가
+     ============================================================ -->
+<style>
+  :root {
+    --bg: #16181d;
+    --panel: #1e2128;
+    --panel2: #23272f;
+    --line: #2c313b;
+    --ink: #e8eaed;
+    --muted: #8c94a3;
+    --green: #4ade8a;
+    --blue: #60a5fa;
+    --violet: #a78bfa;
+    --rose: #f87171;
+    --card-bg: #ffffff;
+    --card-ink: #101215;
+    --amber: #fbbf24;
+  }
+
+  * { box-sizing: border-box; margin: 0; }
+
+  html, body {
+    height: 100%;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Pretendard", "Inter", -apple-system, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ── 전체 레이아웃 ─────────────────────────────────── */
+  .app {
+    display: grid;
+    grid-template-rows: auto 1fr;
+    height: 100%;
+  }
+
+  /* ── 헤더 / 네비게이션 ─────────────────────────────── */
+  .topbar {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 12px 20px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--line);
+  }
+  .topbar .logo {
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: .02em;
+    white-space: nowrap;
+  }
+  .topbar .logo span { color: var(--violet); }
+
+  .nav-links {
+    display: flex;
+    gap: 4px;
+  }
+  .nav-links a {
+    font-size: 12px;
+    font-weight: 500;
+    padding: 6px 14px;
+    border-radius: 6px;
+    color: var(--muted);
+    text-decoration: none;
+    transition: all .15s;
+  }
+  .nav-links a:hover { color: var(--ink); background: var(--panel2); }
+  .nav-links a.active { color: var(--ink); background: var(--panel2); }
+
+  .topbar-right {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .ws-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--muted);
+    transition: background .3s;
+  }
+  .ws-dot.connected { background: var(--green); animation: pulse 1.2s infinite; }
+  @keyframes pulse { 50% { opacity: .3; } }
+
+  .doc-counter {
+    font-size: 12px;
+    font-family: "SFMono-Regular", Consolas, monospace;
+    color: var(--muted);
+  }
+  .doc-counter b { color: var(--blue); font-weight: 700; }
+
+  /* ── 메인 컨텐츠 영역 ─────────────────────────────── */
+  .main {
+    display: grid;
+    grid-template-columns: 340px 1fr;
+    overflow: hidden;
+  }
+  @media (max-width: 860px) {
+    .main { grid-template-columns: 1fr; }
+    .detail-pane { display: none; }
+    .detail-pane.mobile-show { display: flex; position: fixed; inset: 0; z-index: 100; }
+  }
+
+  /* ── 사이드: 목록 + 검색 ───────────────────────────── */
+  .sidebar {
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid var(--line);
+    background: var(--panel);
+    overflow: hidden;
+  }
+
+  /* 검색 바 */
+  .search-area {
+    padding: 14px;
+    border-bottom: 1px solid var(--line);
+  }
+  .search-wrap {
+    position: relative;
+  }
+  .search-wrap svg {
+    position: absolute;
+    left: 11px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 15px; height: 15px;
+    fill: none;
+    stroke: var(--muted);
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .search-wrap input {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 9px 10px 9px 34px;
+    font: inherit;
+    font-size: 13px;
+    color: var(--ink);
+    outline: none;
+    transition: border-color .2s;
+  }
+  .search-wrap input:focus { border-color: var(--violet); }
+  .search-wrap input::placeholder { color: var(--muted); }
+
+  .search-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 8px;
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .search-meta .count b { color: var(--ink); }
+
+  .sort-select {
+    background: transparent;
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    padding: 3px 6px;
+    font: inherit;
+    font-size: 11px;
+    color: var(--muted);
+    cursor: pointer;
+    outline: none;
+  }
+
+  /* 문서 목록 */
+  .doc-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+  }
+  .doc-list::-webkit-scrollbar { width: 5px; }
+  .doc-list::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
+
+  .doc-card {
+    padding: 12px;
+    margin-bottom: 6px;
+    background: var(--panel2);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .doc-card:hover { border-color: var(--muted); }
+  .doc-card.selected { border-color: var(--violet); background: rgba(167, 139, 250, .08); }
+  .doc-card.search-hit { border-color: var(--amber); background: rgba(251, 191, 36, .06); }
+  .doc-card.new-item { animation: cardIn .5s ease; }
+
+  @keyframes cardIn {
+    from { opacity: 0; transform: translateX(-16px); }
+    to   { opacity: 1; transform: none; }
+  }
+
+  .doc-card-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 6px;
+  }
+  .doc-card-id {
+    font-family: "SFMono-Regular", Consolas, monospace;
+    font-size: 10px;
+    color: var(--muted);
+    padding: 2px 6px;
+    background: var(--bg);
+    border-radius: 4px;
+    flex-shrink: 0;
+  }
+  .doc-card-time {
+    font-size: 10px;
+    color: var(--muted);
+  }
+  .doc-card-title {
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.4;
+    margin-bottom: 4px;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .doc-card-preview {
+    font-size: 12px;
+    color: var(--muted);
+    line-height: 1.5;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .doc-card-foot {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+    font-size: 10px;
+    color: var(--muted);
+  }
+  .doc-card-tag {
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-weight: 600;
+  }
+  .tag-stored { background: rgba(74, 222, 138, .12); color: var(--green); }
+  .tag-search { background: rgba(251, 191, 36, .12); color: var(--amber); }
+
+  .score-bar {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .score-bar-track {
+    width: 40px; height: 3px;
+    background: var(--line);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .score-bar-fill {
+    height: 100%;
+    background: var(--amber);
+    border-radius: 2px;
+  }
+
+  .empty-list {
+    padding: 40px 20px;
+    text-align: center;
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.8;
+  }
+
+  /* ── 상세 보기 패널 ────────────────────────────────── */
+  .detail-pane {
+    display: flex;
+    flex-direction: column;
+    background: var(--bg);
+    overflow: hidden;
+  }
+
+  .detail-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--line);
+    flex-shrink: 0;
+  }
+  .detail-toolbar .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font: inherit;
+    font-size: 12px;
+    color: var(--muted);
+    background: var(--panel2);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 6px 12px;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .detail-toolbar .btn:hover { color: var(--ink); border-color: var(--muted); }
+  .detail-toolbar .btn.active { color: var(--violet); border-color: var(--violet); }
+  .detail-toolbar .spacer { flex: 1; }
+  .detail-toolbar .nav-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px; height: 32px;
+    background: var(--panel2);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    color: var(--muted);
+    font-size: 14px;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .detail-toolbar .nav-btn:hover { color: var(--ink); }
+  .detail-toolbar .nav-btn:disabled { opacity: .3; cursor: default; }
+
+  .detail-scroll {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    justify-content: center;
+    padding: 30px 20px;
+  }
+  .detail-scroll::-webkit-scrollbar { width: 6px; }
+  .detail-scroll::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
+
+  /* 카드 스타일 문서 렌더링 */
+  .doc-render {
+    width: 100%;
+    max-width: 620px;
+  }
+
+  .doc-render-card {
+    background: var(--card-bg);
+    color: var(--card-ink);
+    border-radius: 8px;
+    padding: 48px 44px;
+    box-shadow: 0 20px 50px rgba(0,0,0,.4), 0 2px 0 rgba(255,255,255,.05) inset;
+    font-family: "Iowan Old Style", Georgia, "Times New Roman", serif;
+    font-size: 15px;
+    line-height: 2.0;
+    letter-spacing: .01em;
+    word-spacing: .05em;
+    min-height: 300px;
+    transition: background .3s, color .3s;
+  }
+  .doc-render-card.theme-dark {
+    background: #101215;
+    color: #f2f4f7;
+  }
+  .doc-render-card.theme-paper {
+    background: #f6f1e4;
+    color: #23201a;
+  }
+  .doc-render-card.font-sans {
+    font-family: "Helvetica Neue", Arial, "Segoe UI", sans-serif;
+  }
+  .doc-render-card.font-mono {
+    font-family: "SFMono-Regular", Consolas, "Courier New", monospace;
+    font-size: 13px;
+  }
+
+  .doc-render-card h2 {
+    margin: 0 0 1.2em;
+    font-size: .8em;
+    font-weight: 600;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    opacity: .55;
+  }
+  .doc-render-card p {
+    margin: 0 0 1.2em;
+  }
+  .doc-render-card p:last-child { margin-bottom: 0; }
+
+  .doc-render-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    margin-top: 20px;
+    padding-top: 16px;
+    border-top: 1px solid var(--line);
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .doc-render-meta b { color: var(--ink); font-weight: 600; }
+
+  /* 빈 상태 */
+  .detail-empty {
+    flex: 1;
+    display: grid;
+    place-items: center;
+    color: var(--muted);
+    font-size: 13px;
+    text-align: center;
+    line-height: 2;
+  }
+  .detail-empty .big-icon {
+    font-size: 48px;
+    margin-bottom: 12px;
+    opacity: .3;
+  }
+  .detail-empty kbd {
+    font-family: "SFMono-Regular", Consolas, monospace;
+    font-size: 10px;
+    background: var(--panel2);
+    border: 1px solid var(--line);
+    border-bottom-width: 2px;
+    border-radius: 4px;
+    padding: 1px 5px;
+    color: var(--ink);
+  }
+
+  /* ── 모바일 뒤로가기 ───────────────────────────────── */
+  .mobile-back {
+    display: none;
+  }
+  @media (max-width: 860px) {
+    .mobile-back { display: inline-flex; }
+  }
+
+  /* ── 토스트 알림 ───────────────────────────────────── */
+  .toast-container {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    z-index: 200;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .toast {
+    padding: 10px 18px;
+    background: var(--panel);
+    border: 1px solid var(--green);
+    border-radius: 8px;
+    font-size: 12px;
+    color: var(--ink);
+    box-shadow: 0 8px 20px rgba(0,0,0,.5);
+    animation: toastIn .3s ease, toastOut .3s ease 2.7s forwards;
+  }
+  @keyframes toastIn { from { opacity: 0; transform: translateY(10px); } }
+  @keyframes toastOut { to { opacity: 0; transform: translateY(-10px); } }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <!-- ── 상단 바 ───────────────────────────────────── -->
+  <header class="topbar">
+    <div class="logo">OCR <span>Pipeline</span></div>
+    <nav class="nav-links">
+      <a href="/">Dashboard</a>
+      <a href="/viewer" class="active">Viewer</a>
+      <a href="/conveyor">Conveyor</a>
+    </nav>
+    <div class="topbar-right">
+      <div class="ws-dot" id="wsDot" title="WebSocket"></div>
+      <div class="doc-counter"><b id="totalCount">0</b> docs</div>
+    </div>
+  </header>
+
+  <!-- ── 메인 ──────────────────────────────────────── -->
+  <div class="main">
+
+    <!-- 사이드: 검색 + 목록 -->
+    <aside class="sidebar">
+      <div class="search-area">
+        <div class="search-wrap">
+          <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="21" y2="21"/></svg>
+          <input type="text" id="searchInput" placeholder="문서 검색... (Enter)" />
+        </div>
+        <div class="search-meta">
+          <span class="count"><b id="listCount">0</b>개 문서</span>
+          <select class="sort-select" id="sortSelect">
+            <option value="recent">최신순</option>
+            <option value="oldest">오래된순</option>
+            <option value="longest">긴 문서순</option>
+            <option value="shortest">짧은 문서순</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="doc-list" id="docList">
+        <div class="empty-list" id="emptyList">
+          문서가 없습니다<br/>
+          <span style="font-size: 11px;">POST /api/process 로 텍스트를 전송하세요</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- 상세 보기 -->
+    <section class="detail-pane" id="detailPane">
+      <div class="detail-toolbar" id="detailToolbar" style="display: none;">
+        <button class="btn mobile-back" id="backBtn" title="목록으로">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
+          목록
+        </button>
+        <button class="btn" id="themeToggle" title="테마 전환">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+          테마
+        </button>
+        <button class="btn" id="fontToggle" title="서체 전환">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><text x="4" y="18" font-size="16" fill="currentColor" stroke="none">A</text></svg>
+          서체
+        </button>
+        <div class="spacer"></div>
+        <button class="nav-btn" id="prevDoc" title="이전 문서 (←)">&larr;</button>
+        <span style="font-size: 12px; color: var(--muted);" id="docPosition">—</span>
+        <button class="nav-btn" id="nextDoc" title="다음 문서 (→)">&rarr;</button>
+      </div>
+
+      <div class="detail-empty" id="detailEmpty">
+        <div>
+          <div class="big-icon">&#128196;</div>
+          문서를 선택하세요<br/>
+          <kbd>&uarr;</kbd> <kbd>&darr;</kbd> 탐색 &nbsp; <kbd>Enter</kbd> 선택 &nbsp; <kbd>/</kbd> 검색
+        </div>
+      </div>
+
+      <div class="detail-scroll" id="detailScroll" style="display: none;">
+        <div class="doc-render" id="docRender">
+          <div class="doc-render-card" id="renderCard">
+            <h2 id="renderTitle"></h2>
+            <div id="renderBody"></div>
+          </div>
+          <div class="doc-render-meta" id="renderMeta"></div>
+        </div>
+      </div>
+    </section>
+
+  </div>
+</div>
+
+<div class="toast-container" id="toastContainer"></div>
+
+<!-- ============================================================
+     [SCRIPT] 뷰어 로직
+     - 문서 목록 로드 / 검색 / 정렬
+     - 상세 보기 (카드 렌더링)
+     - WebSocket 실시간 업데이트
+     - 키보드 네비게이션
+     [합칠 때] OCR 이미지 프리뷰 영역 추가, 카메라 세션 필터 추가
+     ============================================================ -->
+<script>
+(function () {
+  'use strict';
+
+  /* ── CONFIG ──────────────────────────────────────── */
+  const API_DOCS   = '/api/documents';
+  const API_DOC    = '/api/documents/';
+  const API_SEARCH = '/api/search';
+  const WS_PATH    = '/ws/dashboard';
+
+  /* ── STATE ───────────────────────────────────────── */
+  let allDocs = [];
+  let displayDocs = [];
+  let searchResults = null;
+  let selectedIdx = -1;
+  let selectedDocId = null;
+  let ws = null;
+  let cardTheme = '';
+  let cardFont = 'serif';
+  const themes = ['', 'theme-dark', 'theme-paper'];
+  const fonts = ['', 'font-sans', 'font-mono'];
+  const fontLabels = ['Serif', 'Sans', 'Mono'];
+  let themeIdx = 0;
+  let fontIdx = 0;
+
+  /* ── DOM ─────────────────────────────────────────── */
+  const $searchInput  = document.getElementById('searchInput');
+  const $listCount    = document.getElementById('listCount');
+  const $docList      = document.getElementById('docList');
+  const $emptyList    = document.getElementById('emptyList');
+  const $sortSelect   = document.getElementById('sortSelect');
+  const $totalCount   = document.getElementById('totalCount');
+  const $wsDot        = document.getElementById('wsDot');
+  const $detailPane   = document.getElementById('detailPane');
+  const $detailToolbar= document.getElementById('detailToolbar');
+  const $detailEmpty  = document.getElementById('detailEmpty');
+  const $detailScroll = document.getElementById('detailScroll');
+  const $renderCard   = document.getElementById('renderCard');
+  const $renderTitle  = document.getElementById('renderTitle');
+  const $renderBody   = document.getElementById('renderBody');
+  const $renderMeta   = document.getElementById('renderMeta');
+  const $docPosition  = document.getElementById('docPosition');
+  const $prevDoc      = document.getElementById('prevDoc');
+  const $nextDoc      = document.getElementById('nextDoc');
+  const $themeToggle  = document.getElementById('themeToggle');
+  const $fontToggle   = document.getElementById('fontToggle');
+  const $backBtn      = document.getElementById('backBtn');
+  const $toastCont    = document.getElementById('toastContainer');
+
+  /* ── LOAD DOCUMENTS ─────────────────────────────── */
+  async function loadDocs() {
+    try {
+      const res = await fetch(API_DOCS + '?limit=200');
+      allDocs = await res.json();
+      $totalCount.textContent = allDocs.length;
+      renderList();
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  /* ── SEARCH ─────────────────────────────────────── */
+  let searchTimer = null;
+  function scheduleSearch() {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(doSearch, 300);
+  }
+
+  async function doSearch() {
+    const q = $searchInput.value.trim();
+    if (!q) {
+      searchResults = null;
+      renderList();
+      return;
+    }
+    try {
+      const res = await fetch(API_SEARCH, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: q, limit: 20 }),
+      });
+      const data = await res.json();
+      if (data.sources && data.sources.length > 0) {
+        searchResults = data.sources;
+      } else {
+        searchResults = [];
+      }
+      renderList();
+    } catch (e) {
+      searchResults = [];
+      renderList();
+    }
+  }
+
+  $searchInput.addEventListener('input', scheduleSearch);
+  $searchInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { clearTimeout(searchTimer); doSearch(); }
+    if (e.key === 'Escape') { $searchInput.value = ''; searchResults = null; renderList(); $searchInput.blur(); }
+  });
+
+  /* ── SORT & RENDER LIST ─────────────────────────── */
+  function getDisplayDocs() {
+    if (searchResults !== null) {
+      return searchResults.map(function (s) {
+        return {
+          doc_id: s.doc_id,
+          title: s.title,
+          preview: s.preview || '',
+          char_count: 0,
+          created_at: '',
+          score: s.score,
+          isSearch: true,
+        };
+      });
+    }
+
+    var docs = allDocs.slice();
+    var sort = $sortSelect.value;
+    if (sort === 'oldest') docs.reverse();
+    else if (sort === 'longest') docs.sort(function (a, b) { return b.char_count - a.char_count; });
+    else if (sort === 'shortest') docs.sort(function (a, b) { return a.char_count - b.char_count; });
+
+    return docs.map(function (d) {
+      return {
+        doc_id: d.doc_id,
+        title: d.title,
+        preview: '',
+        char_count: d.char_count,
+        created_at: d.created_at,
+        isSearch: false,
+      };
+    });
+  }
+
+  function renderList() {
+    displayDocs = getDisplayDocs();
+    $listCount.textContent = displayDocs.length;
+    $docList.innerHTML = '';
+
+    if (displayDocs.length === 0) {
+      $emptyList.style.display = '';
+      $emptyList.textContent = searchResults !== null ? '검색 결과가 없습니다' : '문서가 없습니다';
+      $docList.appendChild($emptyList);
+      return;
+    }
+    $emptyList.style.display = 'none';
+
+    displayDocs.forEach(function (doc, i) {
+      var el = document.createElement('div');
+      el.className = 'doc-card' + (doc.isSearch ? ' search-hit' : '') + (doc.doc_id === selectedDocId ? ' selected' : '');
+      el.dataset.idx = i;
+      el.dataset.docId = doc.doc_id;
+
+      var head = '<div class="doc-card-head"><span class="doc-card-id">' + esc(doc.doc_id) + '</span>';
+      if (doc.created_at) head += '<span class="doc-card-time">' + formatTime(doc.created_at) + '</span>';
+      head += '</div>';
+
+      var title = '<div class="doc-card-title">' + esc(doc.title) + '</div>';
+
+      var preview = '';
+      if (doc.preview) {
+        preview = '<div class="doc-card-preview">' + esc(doc.preview) + '</div>';
+      }
+
+      var foot = '<div class="doc-card-foot">';
+      if (doc.isSearch) {
+        foot += '<span class="doc-card-tag tag-search">검색</span>';
+        if (doc.score) {
+          var pct = Math.min(100, doc.score * 10);
+          foot += '<span class="score-bar"><span class="score-bar-track"><span class="score-bar-fill" style="width:' + pct + '%"></span></span>' + doc.score.toFixed(2) + '</span>';
+        }
+      } else {
+        foot += '<span class="doc-card-tag tag-stored">저장됨</span>';
+        if (doc.char_count) foot += '<span>' + doc.char_count + '자</span>';
+      }
+      foot += '</div>';
+
+      el.innerHTML = head + title + preview + foot;
+      el.addEventListener('click', function () { selectDoc(i); });
+      $docList.appendChild(el);
+    });
+  }
+
+  $sortSelect.addEventListener('change', renderList);
+
+  /* ── SELECT & SHOW DOCUMENT ─────────────────────── */
+  async function selectDoc(idx) {
+    if (idx < 0 || idx >= displayDocs.length) return;
+    selectedIdx = idx;
+    selectedDocId = displayDocs[idx].doc_id;
+
+    // highlight in list
+    document.querySelectorAll('.doc-card').forEach(function (el, i) {
+      el.classList.toggle('selected', i === idx);
+    });
+    // scroll into view
+    var card = $docList.children[idx];
+    if (card) card.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+
+    // fetch full document
+    try {
+      var res = await fetch(API_DOC + selectedDocId);
+      var doc = await res.json();
+      if (doc.error) return;
+      showDetail(doc);
+    } catch (e) {
+      // ignore
+    }
+
+    // mobile: show detail
+    $detailPane.classList.add('mobile-show');
+  }
+
+  function showDetail(doc) {
+    $detailEmpty.style.display = 'none';
+    $detailScroll.style.display = '';
+    $detailToolbar.style.display = '';
+
+    $renderTitle.textContent = doc.title;
+    var paras = doc.content.split('\n').filter(function (l) { return l.trim(); });
+    if (paras.length > 0 && paras[0].trim() === doc.title.trim()) paras.shift();
+    $renderBody.innerHTML = paras.map(function (p) { return '<p>' + esc(p) + '</p>'; }).join('');
+
+    $renderMeta.innerHTML =
+      '<span>ID: <b>' + esc(doc.doc_id) + '</b></span>' +
+      '<span>길이: <b>' + doc.char_count + '</b>자</span>' +
+      (doc.created_at ? '<span>저장: <b>' + formatTime(doc.created_at) + '</b></span>' : '');
+
+    updatePosition();
+    $detailScroll.scrollTop = 0;
+  }
+
+  function updatePosition() {
+    if (selectedIdx < 0) return;
+    $docPosition.textContent = (selectedIdx + 1) + ' / ' + displayDocs.length;
+    $prevDoc.disabled = selectedIdx <= 0;
+    $nextDoc.disabled = selectedIdx >= displayDocs.length - 1;
+  }
+
+  /* ── NAVIGATION ─────────────────────────────────── */
+  $prevDoc.addEventListener('click', function () { selectDoc(selectedIdx - 1); });
+  $nextDoc.addEventListener('click', function () { selectDoc(selectedIdx + 1); });
+  $backBtn.addEventListener('click', function () { $detailPane.classList.remove('mobile-show'); });
+
+  /* ── THEME & FONT ───────────────────────────────── */
+  $themeToggle.addEventListener('click', function () {
+    themeIdx = (themeIdx + 1) % themes.length;
+    $renderCard.className = 'doc-render-card ' + themes[themeIdx] + ' ' + fonts[fontIdx];
+  });
+  $fontToggle.addEventListener('click', function () {
+    fontIdx = (fontIdx + 1) % fonts.length;
+    $renderCard.className = 'doc-render-card ' + themes[themeIdx] + ' ' + fonts[fontIdx];
+    $fontToggle.querySelector('svg + *') || null;
+    var textNodes = $fontToggle.childNodes;
+    for (var i = 0; i < textNodes.length; i++) {
+      if (textNodes[i].nodeType === 3 && textNodes[i].textContent.trim()) {
+        textNodes[i].textContent = ' ' + fontLabels[fontIdx];
+        break;
+      }
+    }
+  });
+
+  /* ── KEYBOARD ───────────────────────────────────── */
+  document.addEventListener('keydown', function (e) {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') {
+      if (e.key === 'Escape') e.target.blur();
+      return;
+    }
+
+    if (e.key === '/') {
+      e.preventDefault();
+      $searchInput.focus();
+      return;
+    }
+    if (e.key === 'ArrowDown' || e.key === 'j') {
+      e.preventDefault();
+      selectDoc(Math.min(selectedIdx + 1, displayDocs.length - 1));
+    }
+    if (e.key === 'ArrowUp' || e.key === 'k') {
+      e.preventDefault();
+      selectDoc(Math.max(selectedIdx - 1, 0));
+    }
+    if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      selectDoc(selectedIdx - 1);
+    }
+    if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      selectDoc(selectedIdx + 1);
+    }
+    if (e.key === 'Escape') {
+      $detailPane.classList.remove('mobile-show');
+    }
+  });
+
+  /* ── WEBSOCKET ──────────────────────────────────── */
+  function connectWs() {
+    var proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    ws = new WebSocket(proto + '://' + location.host + WS_PATH);
+
+    ws.onopen = function () {
+      $wsDot.classList.add('connected');
+      $wsDot.title = 'WebSocket 연결됨';
+    };
+
+    ws.onmessage = function (e) {
+      var msg = JSON.parse(e.data);
+      if (msg.type === 'new_document') {
+        var d = msg.data;
+        allDocs.unshift({ doc_id: d.doc_id, title: d.title, char_count: d.char_count, created_at: d.timestamp });
+        $totalCount.textContent = allDocs.length;
+        if (!searchResults) renderList();
+        showToast('새 문서: ' + d.title);
+
+        // animate new card
+        setTimeout(function () {
+          var first = $docList.querySelector('.doc-card');
+          if (first) first.classList.add('new-item');
+        }, 50);
+      }
+      if (msg.type === 'stats') {
+        $totalCount.textContent = msg.data.total;
+      }
+    };
+
+    ws.onclose = function () {
+      $wsDot.classList.remove('connected');
+      $wsDot.title = 'WebSocket 끊김';
+      setTimeout(connectWs, 2000);
+    };
+
+    ws.onerror = function () { ws.close(); };
+  }
+
+  /* ── TOAST ──────────────────────────────────────── */
+  function showToast(text) {
+    var el = document.createElement('div');
+    el.className = 'toast';
+    el.textContent = text;
+    $toastCont.appendChild(el);
+    setTimeout(function () { el.remove(); }, 3000);
+  }
+
+  /* ── UTIL ───────────────────────────────────────── */
+  function esc(s) {
+    var d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+  }
+
+  function formatTime(ts) {
+    if (!ts) return '';
+    var d = new Date(ts);
+    if (isNaN(d.getTime())) return ts;
+    var pad = function (n) { return n < 10 ? '0' + n : n; };
+    return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  }
+
+  /* ── BOOT ───────────────────────────────────────── */
+  loadDocs();
+  connectWs();
+})();
+</script>
+</body>
+</html>
