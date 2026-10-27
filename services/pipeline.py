@@ -19,7 +19,7 @@ class Pipeline:
         self._dedup = dedup
         self._counter = meta_store.get_count()
 
-    def process(self, text: str) -> dict | None:
+    def process(self, text: str, task_id: str = "default") -> dict | None:
         text = text.strip()
         if self._dedup.is_duplicate(text):
             return None
@@ -31,10 +31,11 @@ class Pipeline:
         title = lines[0][:60].strip() if lines else text[:60]
 
         now = datetime.now(timezone.utc).isoformat()
-        self._store.save(doc_id, title, text)
+        self._store.save(doc_id, title, text, task_id=task_id)
 
         return {
             "doc_id": doc_id,
+            "task_id": task_id,
             "title": title,
             "char_count": len(text),
             "timestamp": now,

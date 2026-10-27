@@ -23,6 +23,7 @@ class MetaStore:
             CREATE TABLE IF NOT EXISTS documents (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
                 doc_id      TEXT UNIQUE NOT NULL,
+                task_id     TEXT NOT NULL DEFAULT 'default',
                 title       TEXT NOT NULL,
                 content     TEXT NOT NULL,
                 char_count  INTEGER NOT NULL,
@@ -48,29 +49,55 @@ class MetaStore:
                 VALUES ('delete', old.id, old.doc_id, old.title, old.content);
             END;
         """)
+        self._migrate()
         self._conn.commit()
 
-    def save(self, doc_id: str, title: str, content: str) -> int:
+    def _migrate(self):
+        cols = [r[1] for r in self._conn.execute("PRAGMA table_info(documents)").fetchall()]
+        if "task_id" not in cols:
+            self._conn.execute("ALTER TABLE documents ADD COLUMN task_id TEXT NOT NULL DEFAULT 'default'")
+
+    def save(self, doc_id: str, title: str, content: str, task_id: str = "default") -> int:
         cur = self._conn.execute(
-            "INSERT INTO documents (doc_id, title, content, char_count) VALUES (?, ?, ?, ?)",
-            (doc_id, title, content, len(content)),
+            "INSERT INTO documents (doc_id, task_id, title, content, char_count) VALUES (?, ?, ?, ?, ?)",
+            (doc_id, task_id, title, content, len(content)),
         )
         self._conn.commit()
         return cur.lastrowid
 
-    def get_recent(self, limit: int = 20) -> list[dict]:
-        rows = self._conn.execute(
-            "SELECT doc_id, title, char_count, created_at FROM documents ORDER BY id DESC LIMIT ?",
-            (limit,),
-        ).fetchall()
+    def get_recent(self, limit: int = 20, task_id: str | None = None) -> list[dict]:
+        if task_id:
+            rows = self._conn.execute(
+                "SELECT doc_id, task_id, title, char_count, created_at FROM documents WHERE task_id = ? ORDER BY id DESC LIMIT ?",
+                (task_id, limit),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT doc_id, task_id, title, char_count, created_at FROM documents ORDER BY id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
         return [dict(r) for r in rows]
 
     def get_by_id(self, doc_id: str) -> dict | None:
         row = self._conn.execute(
-            "SELECT doc_id, title, content, char_count, created_at FROM documents WHERE doc_id = ?",
+            "SELECT doc_id, task_id, title, content, char_count, created_at FROM documents WHERE doc_id = ?",
             (doc_id,),
         ).fetchone()
         return dict(row) if row else None
+
+    def get_tasks(self) -> list[dict]:
+        rows = self._conn.execute("""
+            SELECT task_id, COUNT(*) as doc_count, MIN(created_at) as first_at, MAX(created_at) as last_at
+            FROM documents GROUP BY task_id ORDER BY MAX(id) DESC
+        """).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_docs_by_task(self, task_id: str) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT doc_id, task_id, title, content, char_count, created_at FROM documents WHERE task_id = ? ORDER BY id ASC",
+            (task_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
     def search(self, query: str, limit: int = 5) -> list[dict]:
         rows = self._conn.execute(

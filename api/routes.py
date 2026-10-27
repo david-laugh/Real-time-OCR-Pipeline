@@ -34,6 +34,7 @@ def init(pipeline, search_service, meta_store):
 
 class TextInput(BaseModel):
     text: str
+    task_id: str = "default"
     source_id: str | None = None
 
 
@@ -44,7 +45,7 @@ class SearchInput(BaseModel):
 
 @router.post("/api/process")
 async def process_text(body: TextInput):
-    result = _pipeline.process(body.text)
+    result = _pipeline.process(body.text, task_id=body.task_id)
     if result is None:
         return {"status": "skipped", "reason": "duplicate or too short"}
 
@@ -65,9 +66,19 @@ async def process_text(body: TextInput):
     return {"status": "stored", **result}
 
 
+@router.get("/api/tasks")
+async def list_tasks():
+    return _store.get_tasks()
+
+
+@router.get("/api/tasks/{task_id}/docs")
+async def get_task_docs(task_id: str):
+    return _store.get_docs_by_task(task_id)
+
+
 @router.get("/api/documents")
-async def list_documents(limit: int = 20):
-    return _store.get_recent(limit)
+async def list_documents(limit: int = 20, task_id: str | None = None):
+    return _store.get_recent(limit, task_id=task_id)
 
 
 @router.get("/api/documents/{doc_id}")

@@ -6,9 +6,10 @@
 <title>OCR Pipeline — Document Viewer</title>
 <!-- ============================================================
      [FILE] static/viewer.html
-     [역할] 문서 뷰어 — 카드형 탐색 + 전문검색 + 상세 보기
-     [의존] /api/documents, /api/documents/{doc_id}, /api/search, /ws/dashboard
-     [합칠 때] OCR 원본 이미지 표시 영역 추가, 카메라 세션별 필터 추가
+     [역할] 문서 뷰어 — Task 기반 그룹 탐색 + 좌우 캐러셀 + 전문검색
+     [의존] /api/documents, /api/documents/{doc_id}, /api/search,
+            /api/tasks, /api/tasks/{task_id}/docs, /ws/dashboard
+     [합칠 때] OCR 원본 이미지 표시 영역 추가
      ============================================================ -->
 <style>
   :root {
@@ -102,7 +103,7 @@
   /* ── 메인 컨텐츠 영역 ─────────────────────────────── */
   .main {
     display: grid;
-    grid-template-columns: 340px 1fr;
+    grid-template-columns: 300px 1fr;
     overflow: hidden;
   }
   @media (max-width: 860px) {
@@ -111,7 +112,7 @@
     .detail-pane.mobile-show { display: flex; position: fixed; inset: 0; z-index: 100; }
   }
 
-  /* ── 사이드: 목록 + 검색 ───────────────────────────── */
+  /* ── 사이드: Task 목록 + 검색 ─────────────────────── */
   .sidebar {
     display: flex;
     flex-direction: column;
@@ -119,6 +120,52 @@
     background: var(--panel);
     overflow: hidden;
   }
+
+  /* Task 필터 칩 */
+  .task-filter {
+    padding: 14px 14px 0;
+  }
+  .task-filter-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+  .task-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding-bottom: 12px;
+  }
+  .task-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 12px;
+    border-radius: 16px;
+    border: 1px solid var(--line);
+    background: var(--panel2);
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all .15s;
+    white-space: nowrap;
+  }
+  .task-chip:hover { color: var(--ink); border-color: var(--muted); }
+  .task-chip.active { color: var(--violet); border-color: var(--violet); background: rgba(167,139,250,.1); }
+  .task-chip .chip-count {
+    font-size: 10px;
+    font-weight: 700;
+    background: rgba(255,255,255,.08);
+    border-radius: 8px;
+    padding: 1px 6px;
+    min-width: 18px;
+    text-align: center;
+  }
+  .task-chip.active .chip-count { background: rgba(167,139,250,.2); }
 
   /* 검색 바 */
   .search-area {
@@ -177,16 +224,16 @@
     outline: none;
   }
 
-  /* 문서 목록 */
-  .doc-list {
+  /* Task 목록 */
+  .task-list {
     flex: 1;
     overflow-y: auto;
     padding: 8px;
   }
-  .doc-list::-webkit-scrollbar { width: 5px; }
-  .doc-list::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
+  .task-list::-webkit-scrollbar { width: 5px; }
+  .task-list::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
 
-  .doc-card {
+  .task-item {
     padding: 12px;
     margin-bottom: 6px;
     background: var(--panel2);
@@ -195,84 +242,43 @@
     cursor: pointer;
     transition: all .15s;
   }
-  .doc-card:hover { border-color: var(--muted); }
-  .doc-card.selected { border-color: var(--violet); background: rgba(167, 139, 250, .08); }
-  .doc-card.search-hit { border-color: var(--amber); background: rgba(251, 191, 36, .06); }
-  .doc-card.new-item { animation: cardIn .5s ease; }
+  .task-item:hover { border-color: var(--muted); }
+  .task-item.selected { border-color: var(--violet); background: rgba(167,139,250,.08); }
+  .task-item.new-item { animation: cardIn .5s ease; }
 
   @keyframes cardIn {
     from { opacity: 0; transform: translateX(-16px); }
     to   { opacity: 1; transform: none; }
   }
 
-  .doc-card-head {
+  .task-item-head {
     display: flex;
     justify-content: space-between;
-    align-items: flex-start;
-    margin-bottom: 6px;
+    align-items: center;
+    margin-bottom: 4px;
   }
-  .doc-card-id {
-    font-family: "SFMono-Regular", Consolas, monospace;
-    font-size: 10px;
-    color: var(--muted);
-    padding: 2px 6px;
-    background: var(--bg);
-    border-radius: 4px;
-    flex-shrink: 0;
-  }
-  .doc-card-time {
-    font-size: 10px;
-    color: var(--muted);
-  }
-  .doc-card-title {
+  .task-item-name {
     font-size: 13px;
     font-weight: 600;
-    line-height: 1.4;
-    margin-bottom: 4px;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
     overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
   }
-  .doc-card-preview {
-    font-size: 12px;
-    color: var(--muted);
-    line-height: 1.5;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
+  .task-item-badge {
+    font-family: "SFMono-Regular", Consolas, monospace;
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--blue);
+    background: rgba(96,165,250,.1);
+    border-radius: 8px;
+    padding: 2px 8px;
+    flex-shrink: 0;
+    margin-left: 8px;
   }
-  .doc-card-foot {
-    display: flex;
-    gap: 8px;
-    margin-top: 8px;
+  .task-item-time {
     font-size: 10px;
     color: var(--muted);
-  }
-  .doc-card-tag {
-    padding: 2px 8px;
-    border-radius: 4px;
-    font-weight: 600;
-  }
-  .tag-stored { background: rgba(74, 222, 138, .12); color: var(--green); }
-  .tag-search { background: rgba(251, 191, 36, .12); color: var(--amber); }
-
-  .score-bar {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-  }
-  .score-bar-track {
-    width: 40px; height: 3px;
-    background: var(--line);
-    border-radius: 2px;
-    overflow: hidden;
-  }
-  .score-bar-fill {
-    height: 100%;
-    background: var(--amber);
-    border-radius: 2px;
   }
 
   .empty-list {
@@ -283,7 +289,7 @@
     line-height: 1.8;
   }
 
-  /* ── 상세 보기 패널 ────────────────────────────────── */
+  /* ── 상세 보기 패널 (캐러셀) ───────────────────────── */
   .detail-pane {
     display: flex;
     flex-direction: column;
@@ -316,21 +322,54 @@
   .detail-toolbar .btn:hover { color: var(--ink); border-color: var(--muted); }
   .detail-toolbar .btn.active { color: var(--violet); border-color: var(--violet); }
   .detail-toolbar .spacer { flex: 1; }
-  .detail-toolbar .nav-btn {
+
+  /* 캐러셀 네비게이션 */
+  .carousel-nav {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .carousel-nav .nav-btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 32px; height: 32px;
+    width: 36px; height: 36px;
     background: var(--panel2);
     border: 1px solid var(--line);
-    border-radius: 6px;
+    border-radius: 8px;
     color: var(--muted);
-    font-size: 14px;
+    font-size: 16px;
     cursor: pointer;
     transition: all .15s;
   }
-  .detail-toolbar .nav-btn:hover { color: var(--ink); }
-  .detail-toolbar .nav-btn:disabled { opacity: .3; cursor: default; }
+  .carousel-nav .nav-btn:hover:not(:disabled) { color: var(--ink); border-color: var(--violet); background: rgba(167,139,250,.08); }
+  .carousel-nav .nav-btn:disabled { opacity: .3; cursor: default; }
+  .carousel-pos {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ink);
+    min-width: 50px;
+    text-align: center;
+  }
+  .carousel-pos .of { color: var(--muted); font-weight: 400; }
+
+  /* 페이지 인디케이터 (도트) */
+  .page-dots {
+    display: flex;
+    justify-content: center;
+    gap: 6px;
+    padding: 12px 0;
+    flex-shrink: 0;
+  }
+  .page-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--line);
+    cursor: pointer;
+    transition: all .2s;
+  }
+  .page-dot:hover { background: var(--muted); }
+  .page-dot.active { background: var(--violet); width: 20px; border-radius: 4px; }
 
   .detail-scroll {
     flex: 1;
@@ -430,9 +469,7 @@
   }
 
   /* ── 모바일 뒤로가기 ───────────────────────────────── */
-  .mobile-back {
-    display: none;
-  }
+  .mobile-back { display: none; }
   @media (max-width: 860px) {
     .mobile-back { display: inline-flex; }
   }
@@ -459,6 +496,12 @@
   }
   @keyframes toastIn { from { opacity: 0; transform: translateY(10px); } }
   @keyframes toastOut { to { opacity: 0; transform: translateY(-10px); } }
+
+  /* ── 캐러셀 슬라이드 전환 ──────────────────────────── */
+  .slide-left-enter  { animation: slideLeftIn .25s ease; }
+  .slide-right-enter { animation: slideRightIn .25s ease; }
+  @keyframes slideLeftIn  { from { opacity: 0; transform: translateX(40px); } to { opacity: 1; transform: none; } }
+  @keyframes slideRightIn { from { opacity: 0; transform: translateX(-40px); } to { opacity: 1; transform: none; } }
 </style>
 </head>
 <body>
@@ -481,7 +524,7 @@
   <!-- ── 메인 ──────────────────────────────────────── -->
   <div class="main">
 
-    <!-- 사이드: 검색 + 목록 -->
+    <!-- 사이드: Task 필터 + Task 목록 -->
     <aside class="sidebar">
       <div class="search-area">
         <div class="search-wrap">
@@ -489,25 +532,28 @@
           <input type="text" id="searchInput" placeholder="문서 검색... (Enter)" />
         </div>
         <div class="search-meta">
-          <span class="count"><b id="listCount">0</b>개 문서</span>
+          <span class="count"><b id="listCount">0</b>개 항목</span>
           <select class="sort-select" id="sortSelect">
             <option value="recent">최신순</option>
             <option value="oldest">오래된순</option>
-            <option value="longest">긴 문서순</option>
-            <option value="shortest">짧은 문서순</option>
           </select>
         </div>
       </div>
 
-      <div class="doc-list" id="docList">
+      <div class="task-filter" id="taskFilter">
+        <div class="task-filter-label">Tasks</div>
+        <div class="task-chips" id="taskChips"></div>
+      </div>
+
+      <div class="task-list" id="taskList">
         <div class="empty-list" id="emptyList">
-          문서가 없습니다<br/>
+          Task가 없습니다<br/>
           <span style="font-size: 11px;">POST /api/process 로 텍스트를 전송하세요</span>
         </div>
       </div>
     </aside>
 
-    <!-- 상세 보기 -->
+    <!-- 상세 보기: 캐러셀 -->
     <section class="detail-pane" id="detailPane">
       <div class="detail-toolbar" id="detailToolbar" style="display: none;">
         <button class="btn mobile-back" id="backBtn" title="목록으로">
@@ -523,18 +569,22 @@
           서체
         </button>
         <div class="spacer"></div>
-        <button class="nav-btn" id="prevDoc" title="이전 문서 (←)">&larr;</button>
-        <span style="font-size: 12px; color: var(--muted);" id="docPosition">—</span>
-        <button class="nav-btn" id="nextDoc" title="다음 문서 (→)">&rarr;</button>
+        <div class="carousel-nav">
+          <button class="nav-btn" id="prevDoc" title="이전 문서 (←)">&larr;</button>
+          <span class="carousel-pos" id="carouselPos">—</span>
+          <button class="nav-btn" id="nextDoc" title="다음 문서 (→)">&rarr;</button>
+        </div>
       </div>
 
       <div class="detail-empty" id="detailEmpty">
         <div>
           <div class="big-icon">&#128196;</div>
-          문서를 선택하세요<br/>
-          <kbd>&uarr;</kbd> <kbd>&darr;</kbd> 탐색 &nbsp; <kbd>Enter</kbd> 선택 &nbsp; <kbd>/</kbd> 검색
+          Task를 선택하면 문서를 탐색할 수 있습니다<br/>
+          <kbd>&larr;</kbd> <kbd>&rarr;</kbd> 좌우 이동 &nbsp; <kbd>/</kbd> 검색 &nbsp; <kbd>j</kbd> <kbd>k</kbd> Task 탐색
         </div>
       </div>
+
+      <div class="page-dots" id="pageDots" style="display: none;"></div>
 
       <div class="detail-scroll" id="detailScroll" style="display: none;">
         <div class="doc-render" id="docRender">
@@ -552,231 +602,192 @@
 
 <div class="toast-container" id="toastContainer"></div>
 
-<!-- ============================================================
-     [SCRIPT] 뷰어 로직
-     - 문서 목록 로드 / 검색 / 정렬
-     - 상세 보기 (카드 렌더링)
-     - WebSocket 실시간 업데이트
-     - 키보드 네비게이션
-     [합칠 때] OCR 이미지 프리뷰 영역 추가, 카메라 세션 필터 추가
-     ============================================================ -->
 <script>
 (function () {
   'use strict';
 
-  /* ── CONFIG ──────────────────────────────────────── */
-  const API_DOCS   = '/api/documents';
-  const API_DOC    = '/api/documents/';
-  const API_SEARCH = '/api/search';
-  const WS_PATH    = '/ws/dashboard';
+  var API_TASKS     = '/api/tasks';
+  var API_TASK_DOCS = '/api/tasks/';
+  var API_DOCS      = '/api/documents';
+  var API_SEARCH    = '/api/search';
+  var WS_PATH       = '/ws/dashboard';
 
   /* ── STATE ───────────────────────────────────────── */
-  let allDocs = [];
-  let displayDocs = [];
-  let searchResults = null;
-  let selectedIdx = -1;
-  let selectedDocId = null;
-  let ws = null;
-  let cardTheme = '';
-  let cardFont = 'serif';
-  const themes = ['', 'theme-dark', 'theme-paper'];
-  const fonts = ['', 'font-sans', 'font-mono'];
-  const fontLabels = ['Serif', 'Sans', 'Mono'];
-  let themeIdx = 0;
-  let fontIdx = 0;
+  var tasks = [];
+  var selectedTaskIdx = -1;
+  var selectedTaskId = null;
+  var taskDocs = [];
+  var docIdx = 0;
+  var searchMode = false;
+  var searchDocs = [];
+  var ws = null;
+
+  var themes = ['', 'theme-dark', 'theme-paper'];
+  var fonts = ['', 'font-sans', 'font-mono'];
+  var fontLabels = ['Serif', 'Sans', 'Mono'];
+  var themeIdx = 0;
+  var fontIdx = 0;
 
   /* ── DOM ─────────────────────────────────────────── */
-  const $searchInput  = document.getElementById('searchInput');
-  const $listCount    = document.getElementById('listCount');
-  const $docList      = document.getElementById('docList');
-  const $emptyList    = document.getElementById('emptyList');
-  const $sortSelect   = document.getElementById('sortSelect');
-  const $totalCount   = document.getElementById('totalCount');
-  const $wsDot        = document.getElementById('wsDot');
-  const $detailPane   = document.getElementById('detailPane');
-  const $detailToolbar= document.getElementById('detailToolbar');
-  const $detailEmpty  = document.getElementById('detailEmpty');
-  const $detailScroll = document.getElementById('detailScroll');
-  const $renderCard   = document.getElementById('renderCard');
-  const $renderTitle  = document.getElementById('renderTitle');
-  const $renderBody   = document.getElementById('renderBody');
-  const $renderMeta   = document.getElementById('renderMeta');
-  const $docPosition  = document.getElementById('docPosition');
-  const $prevDoc      = document.getElementById('prevDoc');
-  const $nextDoc      = document.getElementById('nextDoc');
-  const $themeToggle  = document.getElementById('themeToggle');
-  const $fontToggle   = document.getElementById('fontToggle');
-  const $backBtn      = document.getElementById('backBtn');
-  const $toastCont    = document.getElementById('toastContainer');
+  var $searchInput  = document.getElementById('searchInput');
+  var $listCount    = document.getElementById('listCount');
+  var $taskChips    = document.getElementById('taskChips');
+  var $taskList     = document.getElementById('taskList');
+  var $emptyList    = document.getElementById('emptyList');
+  var $sortSelect   = document.getElementById('sortSelect');
+  var $totalCount   = document.getElementById('totalCount');
+  var $wsDot        = document.getElementById('wsDot');
+  var $detailPane   = document.getElementById('detailPane');
+  var $detailToolbar= document.getElementById('detailToolbar');
+  var $detailEmpty  = document.getElementById('detailEmpty');
+  var $detailScroll = document.getElementById('detailScroll');
+  var $pageDots     = document.getElementById('pageDots');
+  var $renderCard   = document.getElementById('renderCard');
+  var $renderTitle  = document.getElementById('renderTitle');
+  var $renderBody   = document.getElementById('renderBody');
+  var $renderMeta   = document.getElementById('renderMeta');
+  var $carouselPos  = document.getElementById('carouselPos');
+  var $prevDoc      = document.getElementById('prevDoc');
+  var $nextDoc      = document.getElementById('nextDoc');
+  var $themeToggle  = document.getElementById('themeToggle');
+  var $fontToggle   = document.getElementById('fontToggle');
+  var $backBtn      = document.getElementById('backBtn');
+  var $toastCont    = document.getElementById('toastContainer');
 
-  /* ── LOAD DOCUMENTS ─────────────────────────────── */
-  async function loadDocs() {
+  /* ── LOAD TASKS ─────────────────────────────────── */
+  async function loadTasks() {
     try {
-      const res = await fetch(API_DOCS + '?limit=200');
-      allDocs = await res.json();
-      $totalCount.textContent = allDocs.length;
-      renderList();
-    } catch (e) {
-      // ignore
-    }
+      var res = await fetch(API_TASKS);
+      tasks = await res.json();
+      var total = tasks.reduce(function (s, t) { return s + t.doc_count; }, 0);
+      $totalCount.textContent = total;
+      renderTaskChips();
+      renderTaskList();
+    } catch (e) {}
   }
 
-  /* ── SEARCH ─────────────────────────────────────── */
-  let searchTimer = null;
-  function scheduleSearch() {
-    clearTimeout(searchTimer);
-    searchTimer = setTimeout(doSearch, 300);
-  }
+  /* ── TASK CHIPS ─────────────────────────────────── */
+  function renderTaskChips() {
+    $taskChips.innerHTML = '';
+    var allChip = document.createElement('span');
+    allChip.className = 'task-chip' + (selectedTaskId === null && !searchMode ? ' active' : '');
+    allChip.innerHTML = '전체 <span class="chip-count">' + tasks.reduce(function (s, t) { return s + t.doc_count; }, 0) + '</span>';
+    allChip.addEventListener('click', function () {
+      selectedTaskId = null;
+      selectedTaskIdx = -1;
+      searchMode = false;
+      $searchInput.value = '';
+      renderTaskChips();
+      renderTaskList();
+      hideDetail();
+    });
+    $taskChips.appendChild(allChip);
 
-  async function doSearch() {
-    const q = $searchInput.value.trim();
-    if (!q) {
-      searchResults = null;
-      renderList();
-      return;
-    }
-    try {
-      const res = await fetch(API_SEARCH, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: q, limit: 20 }),
-      });
-      const data = await res.json();
-      if (data.sources && data.sources.length > 0) {
-        searchResults = data.sources;
-      } else {
-        searchResults = [];
-      }
-      renderList();
-    } catch (e) {
-      searchResults = [];
-      renderList();
-    }
-  }
-
-  $searchInput.addEventListener('input', scheduleSearch);
-  $searchInput.addEventListener('keydown', function (e) {
-    if (e.key === 'Enter') { clearTimeout(searchTimer); doSearch(); }
-    if (e.key === 'Escape') { $searchInput.value = ''; searchResults = null; renderList(); $searchInput.blur(); }
-  });
-
-  /* ── SORT & RENDER LIST ─────────────────────────── */
-  function getDisplayDocs() {
-    if (searchResults !== null) {
-      return searchResults.map(function (s) {
-        return {
-          doc_id: s.doc_id,
-          title: s.title,
-          preview: s.preview || '',
-          char_count: 0,
-          created_at: '',
-          score: s.score,
-          isSearch: true,
-        };
-      });
-    }
-
-    var docs = allDocs.slice();
-    var sort = $sortSelect.value;
-    if (sort === 'oldest') docs.reverse();
-    else if (sort === 'longest') docs.sort(function (a, b) { return b.char_count - a.char_count; });
-    else if (sort === 'shortest') docs.sort(function (a, b) { return a.char_count - b.char_count; });
-
-    return docs.map(function (d) {
-      return {
-        doc_id: d.doc_id,
-        title: d.title,
-        preview: '',
-        char_count: d.char_count,
-        created_at: d.created_at,
-        isSearch: false,
-      };
+    tasks.forEach(function (t) {
+      var chip = document.createElement('span');
+      chip.className = 'task-chip' + (selectedTaskId === t.task_id ? ' active' : '');
+      chip.innerHTML = esc(t.task_id) + ' <span class="chip-count">' + t.doc_count + '</span>';
+      chip.addEventListener('click', function () { selectTask(t.task_id); });
+      $taskChips.appendChild(chip);
     });
   }
 
-  function renderList() {
-    displayDocs = getDisplayDocs();
-    $listCount.textContent = displayDocs.length;
-    $docList.innerHTML = '';
+  /* ── TASK LIST ─────────────────────────────────── */
+  function renderTaskList() {
+    $taskList.innerHTML = '';
 
-    if (displayDocs.length === 0) {
+    if (searchMode) {
+      $listCount.textContent = searchDocs.length;
+      if (searchDocs.length === 0) {
+        $emptyList.textContent = '검색 결과가 없습니다';
+        $emptyList.style.display = '';
+        $taskList.appendChild($emptyList);
+        return;
+      }
+      $emptyList.style.display = 'none';
+      searchDocs.forEach(function (doc, i) {
+        var el = document.createElement('div');
+        el.className = 'task-item' + (docIdx === i && selectedTaskId === '__search__' ? ' selected' : '');
+        el.innerHTML =
+          '<div class="task-item-head">' +
+            '<div class="task-item-name">' + esc(doc.title) + '</div>' +
+            '<span class="task-item-badge">' + (doc.score ? doc.score.toFixed(2) : '') + '</span>' +
+          '</div>' +
+          '<div class="task-item-time">' + esc(doc.doc_id) + '</div>';
+        el.addEventListener('click', function () {
+          selectedTaskId = '__search__';
+          taskDocs = searchDocs;
+          showDoc(i);
+        });
+        $taskList.appendChild(el);
+      });
+      return;
+    }
+
+    var displayTasks = selectedTaskId ? tasks.filter(function (t) { return t.task_id === selectedTaskId; }) : tasks.slice();
+    if ($sortSelect.value === 'oldest') displayTasks.reverse();
+
+    $listCount.textContent = displayTasks.length;
+
+    if (displayTasks.length === 0) {
+      $emptyList.textContent = 'Task가 없습니다';
       $emptyList.style.display = '';
-      $emptyList.textContent = searchResults !== null ? '검색 결과가 없습니다' : '문서가 없습니다';
-      $docList.appendChild($emptyList);
+      $taskList.appendChild($emptyList);
       return;
     }
     $emptyList.style.display = 'none';
 
-    displayDocs.forEach(function (doc, i) {
+    displayTasks.forEach(function (t, i) {
       var el = document.createElement('div');
-      el.className = 'doc-card' + (doc.isSearch ? ' search-hit' : '') + (doc.doc_id === selectedDocId ? ' selected' : '');
-      el.dataset.idx = i;
-      el.dataset.docId = doc.doc_id;
-
-      var head = '<div class="doc-card-head"><span class="doc-card-id">' + esc(doc.doc_id) + '</span>';
-      if (doc.created_at) head += '<span class="doc-card-time">' + formatTime(doc.created_at) + '</span>';
-      head += '</div>';
-
-      var title = '<div class="doc-card-title">' + esc(doc.title) + '</div>';
-
-      var preview = '';
-      if (doc.preview) {
-        preview = '<div class="doc-card-preview">' + esc(doc.preview) + '</div>';
-      }
-
-      var foot = '<div class="doc-card-foot">';
-      if (doc.isSearch) {
-        foot += '<span class="doc-card-tag tag-search">검색</span>';
-        if (doc.score) {
-          var pct = Math.min(100, doc.score * 10);
-          foot += '<span class="score-bar"><span class="score-bar-track"><span class="score-bar-fill" style="width:' + pct + '%"></span></span>' + doc.score.toFixed(2) + '</span>';
-        }
-      } else {
-        foot += '<span class="doc-card-tag tag-stored">저장됨</span>';
-        if (doc.char_count) foot += '<span>' + doc.char_count + '자</span>';
-      }
-      foot += '</div>';
-
-      el.innerHTML = head + title + preview + foot;
-      el.addEventListener('click', function () { selectDoc(i); });
-      $docList.appendChild(el);
+      el.className = 'task-item' + (selectedTaskId === t.task_id ? ' selected' : '');
+      el.dataset.taskId = t.task_id;
+      el.innerHTML =
+        '<div class="task-item-head">' +
+          '<div class="task-item-name">' + esc(t.task_id) + '</div>' +
+          '<span class="task-item-badge">' + t.doc_count + ' docs</span>' +
+        '</div>' +
+        '<div class="task-item-time">' + formatTime(t.first_at) + ' ~ ' + formatTime(t.last_at) + '</div>';
+      el.addEventListener('click', function () { selectTask(t.task_id); });
+      $taskList.appendChild(el);
     });
   }
 
-  $sortSelect.addEventListener('change', renderList);
+  $sortSelect.addEventListener('change', renderTaskList);
 
-  /* ── SELECT & SHOW DOCUMENT ─────────────────────── */
-  async function selectDoc(idx) {
-    if (idx < 0 || idx >= displayDocs.length) return;
-    selectedIdx = idx;
-    selectedDocId = displayDocs[idx].doc_id;
+  /* ── SELECT TASK ───────────────────────────────── */
+  async function selectTask(taskId) {
+    selectedTaskId = taskId;
+    selectedTaskIdx = tasks.findIndex(function (t) { return t.task_id === taskId; });
+    searchMode = false;
+    $searchInput.value = '';
+    renderTaskChips();
+    renderTaskList();
 
-    // highlight in list
-    document.querySelectorAll('.doc-card').forEach(function (el, i) {
-      el.classList.toggle('selected', i === idx);
-    });
-    // scroll into view
-    var card = $docList.children[idx];
-    if (card) card.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-
-    // fetch full document
     try {
-      var res = await fetch(API_DOC + selectedDocId);
-      var doc = await res.json();
-      if (doc.error) return;
-      showDetail(doc);
+      var res = await fetch(API_TASK_DOCS + encodeURIComponent(taskId) + '/docs');
+      taskDocs = await res.json();
+      if (taskDocs.length > 0) {
+        showDoc(0);
+      } else {
+        hideDetail();
+      }
     } catch (e) {
-      // ignore
+      hideDetail();
     }
 
-    // mobile: show detail
     $detailPane.classList.add('mobile-show');
   }
 
-  function showDetail(doc) {
+  /* ── SHOW DOCUMENT (캐러셀) ────────────────────── */
+  function showDoc(idx, direction) {
+    if (idx < 0 || idx >= taskDocs.length) return;
+    docIdx = idx;
+    var doc = taskDocs[idx];
+
     $detailEmpty.style.display = 'none';
     $detailScroll.style.display = '';
     $detailToolbar.style.display = '';
+    $pageDots.style.display = '';
 
     $renderTitle.textContent = doc.title;
     var paras = doc.content.split('\n').filter(function (l) { return l.trim(); });
@@ -785,26 +796,93 @@
 
     $renderMeta.innerHTML =
       '<span>ID: <b>' + esc(doc.doc_id) + '</b></span>' +
+      '<span>Task: <b>' + esc(doc.task_id || '') + '</b></span>' +
       '<span>길이: <b>' + doc.char_count + '</b>자</span>' +
       (doc.created_at ? '<span>저장: <b>' + formatTime(doc.created_at) + '</b></span>' : '');
 
-    updatePosition();
+    var docRender = document.getElementById('docRender');
+    docRender.classList.remove('slide-left-enter', 'slide-right-enter');
+    if (direction === 'left')  { void docRender.offsetWidth; docRender.classList.add('slide-left-enter'); }
+    if (direction === 'right') { void docRender.offsetWidth; docRender.classList.add('slide-right-enter'); }
+
+    updateCarousel();
     $detailScroll.scrollTop = 0;
   }
 
-  function updatePosition() {
-    if (selectedIdx < 0) return;
-    $docPosition.textContent = (selectedIdx + 1) + ' / ' + displayDocs.length;
-    $prevDoc.disabled = selectedIdx <= 0;
-    $nextDoc.disabled = selectedIdx >= displayDocs.length - 1;
+  function hideDetail() {
+    $detailEmpty.style.display = '';
+    $detailScroll.style.display = 'none';
+    $detailToolbar.style.display = 'none';
+    $pageDots.style.display = 'none';
+    taskDocs = [];
+    docIdx = 0;
   }
 
-  /* ── NAVIGATION ─────────────────────────────────── */
-  $prevDoc.addEventListener('click', function () { selectDoc(selectedIdx - 1); });
-  $nextDoc.addEventListener('click', function () { selectDoc(selectedIdx + 1); });
+  function updateCarousel() {
+    $carouselPos.innerHTML = '<b>' + (docIdx + 1) + '</b> <span class="of">/ ' + taskDocs.length + '</span>';
+    $prevDoc.disabled = docIdx <= 0;
+    $nextDoc.disabled = docIdx >= taskDocs.length - 1;
+
+    $pageDots.innerHTML = '';
+    var maxDots = Math.min(taskDocs.length, 20);
+    for (var i = 0; i < maxDots; i++) {
+      var dot = document.createElement('span');
+      dot.className = 'page-dot' + (i === docIdx ? ' active' : '');
+      dot.dataset.idx = i;
+      dot.addEventListener('click', function () {
+        var target = parseInt(this.dataset.idx);
+        showDoc(target, target > docIdx ? 'left' : 'right');
+      });
+      $pageDots.appendChild(dot);
+    }
+  }
+
+  /* ── CAROUSEL NAV ──────────────────────────────── */
+  $prevDoc.addEventListener('click', function () { showDoc(docIdx - 1, 'right'); });
+  $nextDoc.addEventListener('click', function () { showDoc(docIdx + 1, 'left'); });
   $backBtn.addEventListener('click', function () { $detailPane.classList.remove('mobile-show'); });
 
-  /* ── THEME & FONT ───────────────────────────────── */
+  /* ── SEARCH ────────────────────────────────────── */
+  var searchTimer = null;
+
+  async function doSearch() {
+    var q = $searchInput.value.trim();
+    if (!q) {
+      searchMode = false;
+      searchDocs = [];
+      renderTaskChips();
+      renderTaskList();
+      return;
+    }
+    try {
+      var res = await fetch(API_SEARCH, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: q, limit: 20 }),
+      });
+      var data = await res.json();
+      searchMode = true;
+      searchDocs = (data.sources && data.sources.length > 0) ? data.sources : [];
+      if (searchDocs.length === 0 && Array.isArray(data) && data.length > 0) searchDocs = data;
+      renderTaskChips();
+      renderTaskList();
+    } catch (e) {
+      searchMode = true;
+      searchDocs = [];
+      renderTaskList();
+    }
+  }
+
+  $searchInput.addEventListener('input', function () {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(doSearch, 300);
+  });
+  $searchInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { clearTimeout(searchTimer); doSearch(); }
+    if (e.key === 'Escape') { $searchInput.value = ''; searchMode = false; searchDocs = []; renderTaskChips(); renderTaskList(); $searchInput.blur(); }
+  });
+
+  /* ── THEME & FONT ──────────────────────────────── */
   $themeToggle.addEventListener('click', function () {
     themeIdx = (themeIdx + 1) % themes.length;
     $renderCard.className = 'doc-render-card ' + themes[themeIdx] + ' ' + fonts[fontIdx];
@@ -812,7 +890,6 @@
   $fontToggle.addEventListener('click', function () {
     fontIdx = (fontIdx + 1) % fonts.length;
     $renderCard.className = 'doc-render-card ' + themes[themeIdx] + ' ' + fonts[fontIdx];
-    $fontToggle.querySelector('svg + *') || null;
     var textNodes = $fontToggle.childNodes;
     for (var i = 0; i < textNodes.length; i++) {
       if (textNodes[i].nodeType === 3 && textNodes[i].textContent.trim()) {
@@ -822,40 +899,37 @@
     }
   });
 
-  /* ── KEYBOARD ───────────────────────────────────── */
+  /* ── KEYBOARD ──────────────────────────────────── */
   document.addEventListener('keydown', function (e) {
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') {
       if (e.key === 'Escape') e.target.blur();
       return;
     }
 
-    if (e.key === '/') {
-      e.preventDefault();
-      $searchInput.focus();
-      return;
-    }
+    if (e.key === '/') { e.preventDefault(); $searchInput.focus(); return; }
+
+    if (e.key === 'ArrowLeft') { e.preventDefault(); showDoc(docIdx - 1, 'right'); }
+    if (e.key === 'ArrowRight') { e.preventDefault(); showDoc(docIdx + 1, 'left'); }
+
     if (e.key === 'ArrowDown' || e.key === 'j') {
       e.preventDefault();
-      selectDoc(Math.min(selectedIdx + 1, displayDocs.length - 1));
+      if (!searchMode && tasks.length > 0) {
+        var nextIdx = selectedTaskIdx + 1;
+        if (nextIdx < tasks.length) selectTask(tasks[nextIdx].task_id);
+      }
     }
     if (e.key === 'ArrowUp' || e.key === 'k') {
       e.preventDefault();
-      selectDoc(Math.max(selectedIdx - 1, 0));
+      if (!searchMode && tasks.length > 0) {
+        var prevIdx = selectedTaskIdx - 1;
+        if (prevIdx >= 0) selectTask(tasks[prevIdx].task_id);
+      }
     }
-    if (e.key === 'ArrowLeft') {
-      e.preventDefault();
-      selectDoc(selectedIdx - 1);
-    }
-    if (e.key === 'ArrowRight') {
-      e.preventDefault();
-      selectDoc(selectedIdx + 1);
-    }
-    if (e.key === 'Escape') {
-      $detailPane.classList.remove('mobile-show');
-    }
+
+    if (e.key === 'Escape') { $detailPane.classList.remove('mobile-show'); }
   });
 
-  /* ── WEBSOCKET ──────────────────────────────────── */
+  /* ── WEBSOCKET ─────────────────────────────────── */
   function connectWs() {
     var proto = location.protocol === 'https:' ? 'wss' : 'ws';
     ws = new WebSocket(proto + '://' + location.host + WS_PATH);
@@ -869,16 +943,8 @@
       var msg = JSON.parse(e.data);
       if (msg.type === 'new_document') {
         var d = msg.data;
-        allDocs.unshift({ doc_id: d.doc_id, title: d.title, char_count: d.char_count, created_at: d.timestamp });
-        $totalCount.textContent = allDocs.length;
-        if (!searchResults) renderList();
-        showToast('새 문서: ' + d.title);
-
-        // animate new card
-        setTimeout(function () {
-          var first = $docList.querySelector('.doc-card');
-          if (first) first.classList.add('new-item');
-        }, 50);
+        showToast('새 문서: ' + d.title + ' [' + (d.task_id || 'default') + ']');
+        loadTasks();
       }
       if (msg.type === 'stats') {
         $totalCount.textContent = msg.data.total;
@@ -894,7 +960,7 @@
     ws.onerror = function () { ws.close(); };
   }
 
-  /* ── TOAST ──────────────────────────────────────── */
+  /* ── TOAST ─────────────────────────────────────── */
   function showToast(text) {
     var el = document.createElement('div');
     el.className = 'toast';
@@ -903,8 +969,9 @@
     setTimeout(function () { el.remove(); }, 3000);
   }
 
-  /* ── UTIL ───────────────────────────────────────── */
+  /* ── UTIL ──────────────────────────────────────── */
   function esc(s) {
+    if (!s) return '';
     var d = document.createElement('div');
     d.textContent = s;
     return d.innerHTML;
@@ -918,8 +985,8 @@
     return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
   }
 
-  /* ── BOOT ───────────────────────────────────────── */
-  loadDocs();
+  /* ── BOOT ──────────────────────────────────────── */
+  loadTasks();
   connectWs();
 })();
 </script>
