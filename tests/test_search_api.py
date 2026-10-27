@@ -1,4 +1,4 @@
-"""Tests for POST /api/search and rag_service (no network: Gemini/Supabase are faked).
+"""Tests for POST /api/rag/search and rag_service (no network: Gemini/Supabase are faked).
 
 Run from the repo root:
     python -m unittest discover -s tests -v
@@ -41,7 +41,7 @@ class SearchApiFormatTest(unittest.TestCase):
         self.client = TestClient(main.app)
 
     def post(self, body):
-        return self.client.post("/api/search", json=body)
+        return self.client.post("/api/rag/search", json=body)
 
     def assert_error(self, res, status: int, code: str) -> None:
         self.assertEqual(res.status_code, status)
@@ -67,7 +67,7 @@ class SearchApiFormatTest(unittest.TestCase):
         for body in ({"query": "q", "limit": 0}, {"limit": 3}, {"query": "x" * 1001}):
             with self.subTest(body=body):
                 self.assert_error(self.post(body), 400, "invalid_request")
-        res = self.client.post("/api/search", content=b"not json", headers={"Content-Type": "application/json"})
+        res = self.client.post("/api/rag/search", content=b"not json", headers={"Content-Type": "application/json"})
         self.assert_error(res, 400, "invalid_request")
 
     def test_rate_limited_is_429(self) -> None:
@@ -88,6 +88,16 @@ class SearchApiFormatTest(unittest.TestCase):
         res = self.client.get("/chat")
         self.assertEqual(res.status_code, 200)
         self.assertIn("<rag-chat", res.text)
+
+    def test_fts_search_path_stays_with_routes(self) -> None:
+        # POST /api/search is the FTS5 search in api/routes.py (dashboard.html); RAG must not shadow it
+        owners = {
+            (route.endpoint.__module__, path)
+            for route in main.app.routes
+            for path in [getattr(route, "path", "")]
+            if path in ("/api/search", "/api/rag/search")
+        }
+        self.assertEqual(owners, {("api.routes", "/api/search"), ("api.search", "/api/rag/search")})
 
     def test_other_routes_keep_default_validation(self) -> None:
         # SearchRoute must not change other routers (e.g. /frame still returns 422 {detail})

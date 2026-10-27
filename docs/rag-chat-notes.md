@@ -8,7 +8,7 @@
 Supabase `ocr_documents`에 쌓인 OCR 텍스트를 근거로 질문에 답하는 챗봇.
 대시보드 전체는 다른 팀원 담당일 수 있으므로 챗봇은 **독립 조각(`<rag-chat>`)**으로 만들고, 단독 테스트 페이지 `/chat`을 둔다.
 
-## 현재 상태 (브랜치 `feature/rag-chat`, 기준 `origin/release` 17a9725 = 카메라+OCR+QR)
+## 현재 상태 (브랜치 `feature/rag-chat`, 기준 `origin/release` 17a9725 = 카메라+OCR+QR, 이후 beeabdf 머지)
 - [x] 브랜치 재생성 (이전 브랜치는 pec 강제 병합 상태 31bc5e0 기준이라 삭제 후 17a9725에서 새로 만듦)
 - [x] pec 파일 확인: `api/routes.py`, `.env.example` 없음 / `main.py`에 `pair`, `session` 라우터 있음
   - `.claude/launch.json`: release에 남은 pec 잔여 파일, 이 브랜치에서는 건드리지 않음
@@ -16,12 +16,14 @@ Supabase `ocr_documents`에 쌓인 OCR 텍스트를 근거로 질문에 답하�
 - [x] RPC SQL 파일 `db/sql/match_ocr_documents.sql`
 - [x] Supabase SQL Editor에서 위 파일 실행 (2026-10-27, "Success. No rows returned")
 - [x] `gemini_service.py`/`db/supabase.py` 최소 수정 (import·시그니처 확인, 실제 API 호출은 `.env` 준비 후)
-- [x] 서버: `services/rag_service.py`, `api/search.py`, `main.py` (실데이터로 `/api/search` 전체 응답 확인)
+- [x] 서버: `services/rag_service.py`, `api/search.py`, `main.py` (실데이터로 전체 응답 확인)
 - [x] 시드 스크립트 `scripts/seed_conveyor.py` → `session_id='seed'` 100행 저장 (2026-10-27)
 - [x] `<rag-chat>` 조각 `static/chat/rag-chat.js`
 - [x] `/chat` 단독 페이지 `static/chat/index.html` (검색 범위: 전체 / seed / 세션 ID 직접 입력)
 - [ ] **데모 전: seed 삭제 또는 대시보드 검색 범위를 session-id로 제한** (seed 100행이 실데이터 검색에 섞임)
-- [ ] **로컬 확인 → push, PR(→ release)** ← 다음 할 일
+- [x] `origin/release` beeabdf(PR #4~#6: MQTT 대시보드·SQLite FTS5 검색·대시보드 QR) 머지, 충돌 해결(`main.py`, `gemini_service.py`)
+- [x] RAG 경로를 `POST /api/rag/search`로 변경 (release의 FTS5 `POST /api/search`와 겹침, 2026-10-27 결정)
+- [ ] **push, PR(→ release)** ← 다음 할 일
 
 ## 흐름
 ```
@@ -34,7 +36,7 @@ Supabase `ocr_documents`에 쌓인 OCR 텍스트를 근거로 질문에 답하�
 ## 결정사항
 | 항목 | 결정 | 이유 |
 |---|---|---|
-| API | `POST /api/search` | pec 대시보드가 쓰던 경로와 같게 |
+| API | `POST /api/rag/search` (처음엔 `/api/search`) | release에 pec FTS5 `POST /api/search`(`api/routes.py`, `dashboard.html` 사용)가 들어와 경로를 분리. `routes.py`·`dashboard.html`은 수정 안 함. 응답 형식은 같으므로 대시보드를 RAG로 바꾸려면 `dashboard.html`의 `API_SEARCH`만 바꾸면 됨(3번 결정) |
 | 요청 | `{query, limit=5, session_id?}` | `session_id` 없으면 전체 문서 검색 |
 | 응답 | `{answer, sources:[{doc_id, title, preview, score}]}` | pec 형식 그대로. `doc_id`=`ocr_documents.id`(uuid), `preview`=본문 앞 120자(+`...`), `score`=코사인 유사도(0~1) |
 | 빈 질문 | `{answer:"", sources:[]}` | pec 동작과 같게 |
@@ -47,7 +49,7 @@ Supabase `ocr_documents`에 쌓인 OCR 텍스트를 근거로 질문에 답하�
 | 답변 규칙 | 근거 문서 안에서만 답하고, 없으면 모른다고 답함. 질문 언어로 답함(문서는 영어) | |
 | 2차 중복 제거 | 후보를 `limit×3`개 가져와 본문 단어 집합(3글자 이상 영문) Jaccard ≥ 0.5면 같은 그룹. 그룹의 아무 행과 비슷하면 합류. 본문이 가장 긴 행을 남기고 score는 그룹 최고값 | 같은 카드가 제목만 다르게 저장됨(아래 테스트 기록). OCR 본문은 줄 순서가 섞여 `SequenceMatcher` 0.9로는 하나도 안 걸림 |
 | 출처 제목 대체 | 제목에 글자가 없으면(빈 값, `214` 같은 숫자/기호뿐) 본문에서 글자 위주인 첫 줄(글자 4개 이상, 60% 이상) 앞 40자 | 본문도 카드 번호(`214`, `22 24`)로 시작하는 경우가 있음 |
-| 오류 형식 | 모든 오류를 `{answer: 안내 문구, sources: [], error: 코드}`로 응답. 400 `invalid_request`(session_id 형식, 본문 검증 실패: `limit` 1~20, `query` 필수·1000자, JSON 아님), 429 `rate_limited`, 502 `search_failed`(Supabase 등 그 외), 503 `unavailable`(Gemini 503) | pec 대시보드는 `data.answer`만 읽으므로 `{detail}`이면 빈 화면. 422→400 변환은 `/api/search` 라우터(`SearchRoute`)에만 적용, 다른 라우트는 FastAPI 기본 유지. 원본 오류는 로그에만 |
+| 오류 형식 | 모든 오류를 `{answer: 안내 문구, sources: [], error: 코드}`로 응답. 400 `invalid_request`(session_id 형식, 본문 검증 실패: `limit` 1~20, `query` 필수·1000자, JSON 아님), 429 `rate_limited`, 502 `search_failed`(Supabase 등 그 외), 503 `unavailable`(Gemini 503) | pec 대시보드는 `data.answer`만 읽으므로 `{detail}`이면 빈 화면. 422→400 변환은 RAG 라우터(`SearchRoute`)에만 적용, 다른 라우트는 FastAPI 기본 유지. 원본 오류는 로그에만 |
 | 2번 파일 수정 | `gemini_service.py`: `embed_text(text, task_type="RETRIEVAL_DOCUMENT")` + `generate_text(prompt, system_instruction=None, model=None)` + `is_rate_limit_error(exc)`/`is_unavailable_error(exc)` + `CHAT_FALLBACK_MODEL` / `db/supabase.py`: `match_ocr_documents(query_embedding, match_count=5, session_id=None)` | 최소 수정, 기존 호출부 영향 없음 |
 | 시드 | 컨베이어 HTML의 `PASSAGES`(100개, `{title, body[]}`)를 `session_id='seed'`로 저장 | 실제 OCR 없이 검색 테스트 |
 | 시드 재실행 | 전부 임베딩한 뒤 `session_id='seed'` 행을 지우고 새로 저장 | 중복 방지. 임베딩 도중 실패해도 기존 seed는 남음 |
@@ -56,7 +58,7 @@ Supabase `ocr_documents`에 쌓인 OCR 텍스트를 근거로 질문에 답하�
 | 조각 동작 | Enter 전송(한글 IME 조합 중 Enter 무시), Shift+Enter 줄바꿈, 응답 중 입력 잠금, 30초 시간 초과. 출처는 `[n]`으로 번호를 붙여 답변의 인용 번호와 맞춤. 서버 문자열은 `textContent`로만 넣음 | |
 | 조각 오류 표시 | 서버 오류는 `answer` 문구를 빨간 말풍선으로. 클라이언트 오류 `network`(연결 실패), `timeout`, `bad_response`(JSON 아님·`answer` 없음, 예: 다른 서버의 404) | |
 | `/chat` 검색 범위 | 라디오 전체 / seed / 세션 ID. 잘못된 세션 ID는 전체로 바꾸지 않고 그대로 보내 400 안내 문구가 채팅에 뜨게 함. `?session=<id>`, `?api-base=` 지원 | 조용히 전체 검색으로 바뀌면 혼동 |
-| main.py | `3번 (대시보드/RAG):` 주석 아래 라우터 등록 + import 줄에 추가 | |
+| main.py | release 구성(라우터 튜플)에 `search.router` 추가 + import 줄에 `search` | release 머지 후 형태 |
 | CORS | 수정 안 함 | `/chat`은 같은 origin. github.io 대시보드에서 부를 경우 지금 설정(POST 허용)으로 가능 |
 
 ## Supabase RPC (`db/sql/match_ocr_documents.sql`, SQL Editor에서 1회 실행)
@@ -91,7 +93,8 @@ $$;
 | `GEMINI_EMBEDDING_MODEL` | | 기본 `gemini-embedding-001` |
 | `GEMINI_EMBEDDING_DIM` | | 기본 768 |
 | `SUPABASE_OCR_TABLE` | | 기본 `ocr_documents` |
-- 코드에서 `.env`를 직접 읽지 않음 → `uvicorn main:app --env-file .env`로 실행 (`uvicorn[standard]`에 python-dotenv 포함)
+- release 머지 후 `main.py`가 `load_dotenv(.env)`로 직접 읽음 → `--env-file` 불필요. Windows에서는 `python run.py`로 실행(MQTT가 SelectorEventLoop 필요, `uvicorn main:app`은 기동 실패)
+- 머지 전 테스트는 `uvicorn main:app --env-file .env`로 했음
 
 ## 파일
 ```
@@ -99,8 +102,8 @@ services/gemini_service.py   embed_text(task_type=...), generate_text() 추가
 db/supabase.py               match_ocr_documents() RPC 호출 추가
 db/sql/match_ocr_documents.sql  RPC 정의 (SQL Editor에서 실행)
 services/rag_service.py      embed → match → answer, pec 응답 형식으로 변환
-api/search.py                POST /api/search, GET /chat
-main.py                      라우터 등록
+api/search.py                POST /api/rag/search, GET /chat
+main.py                      라우터 등록 (release의 라우터 튜플에 search.router)
 static/chat/rag-chat.js      <rag-chat> 조각
 static/chat/index.html       /chat 테스트 페이지
 tests/test_search_api.py     unittest (python -m unittest discover -s tests -v), 네트워크 없이 가짜 Gemini/Supabase
@@ -147,15 +150,15 @@ READING IN TRANSLATION...`으로 시작
   - "translation reading": 후보 13 → 8, READING 카드 4행이 `ON READING IN TRANSLATION`(본문 296자, 최장) 1행으로 합쳐짐
   - "service bulletin seal housing": SERVICE BULLETIN 변형 중 Jaccard ≥ 0.5인 것만 합쳐짐, `SERTICE BULLETIN SB-`(0.37~0.43)와 걸친 조각은 따로 남음(보수적)
   - `display_title("214", <위 본문>)` → `READING IN TRANSLATION`
-- 2026-10-27, `/api/search` HTTP: 빈 질문 200 `{answer:"",sources:[]}`, 잘못된 session_id 400, `limit:0` 422
-- 2026-10-27, `/api/search` 실호출 (uvicorn `--env-file .env`, `gemini-2.5-flash`):
+- 2026-10-27, (머지 전 경로 `/api/search`) HTTP: 빈 질문 200 `{answer:"",sources:[]}`, 잘못된 session_id 400, `limit:0` 422
+- 2026-10-27, (머지 전 경로) 실호출 (uvicorn `--env-file .env`, `gemini-2.5-flash`):
   - "번역할 때 번역가는 무엇을 배신한다고 해?" → 200, 3.4초, READING 카드 4행 중 `ON READING IN TRANSLATION` 1개만 출처에 남음, 한국어 답변 + `[1]` 인용
   - "SB-4471 불량 부품 번호와 조임 토크는?" → 200, 3.0초, "41-B/7, 24 N-m" (원문 24 N·m, OCR이 `·`를 `-`로 읽음)
   - "화성 탐사선의 연료 종류는?" → 200, "제공된 문서에서 … 찾을 수 없습니다" (검색 결과는 있으나 관련 없음 → 모델이 모른다고 답함)
   - 같은 날 `gemini-3.5-flash`, `gemini-3.8-flash`, `gemini-flash-latest`, `gemini-3.5-flash-lite`도 호출 성공
 - 2026-10-27, 품질 필터: 실데이터 30행 중 3행 제외(`4`, `4uty`, `Al about i Monrment…`), 시드 카드 100개 + 문단 204개 전부 통과
 - 2026-10-27, 429 처리: 가짜 Gemini로 기본 429 → 예비 성공 / 둘 다 429 → `RateLimitedError` / 예비 빈 값 → 재시도 없음 확인. TestClient로 HTTP 429·502 응답에 원본 오류 없음 확인
-- 2026-10-27, `/api/search` 실호출 (`gemini-3.5-flash-lite`): 번역 질문 2.9초, SB-4471 2.2초(41-B/7, 24 N-m), 걷기 2.5초, 화성 1.6초("포함되어 있지 않습니다"). 잡음 행 출처에서 빠짐
+- 2026-10-27, (머지 전 경로) 실호출 (`gemini-3.5-flash-lite`): 번역 질문 2.9초, SB-4471 2.2초(41-B/7, 24 N-m), 걷기 2.5초, 화성 1.6초("포함되어 있지 않습니다"). 잡음 행 출처에서 빠짐
 - 2026-10-27, 시드: `--dry-run` 100개 파싱(`\"` 포함 문단 정상), 실행 시 기존 seed 0행 삭제 → 100행 저장, 개수 확인 100
   - `session_id='seed'` 검색: "케틀은 몇 도에서 자동으로 꺼져?" → 100 °C, 1위 Instructions for the New Kettle(0.68) / "종이가 사마르칸트에 도착한 해는?" → 751년, 1위 A Short History of Paper(0.73)
   - 전체 검색에 seed가 섞여도 실데이터 번역 질문 1위는 `ON READING IN TRANSLATION` 유지
@@ -168,6 +171,10 @@ READING IN TRANSLATION...`으로 시작
   - 다른 서버(404 `{detail}`) 응답 → `bad_response` 문구
   - 콘솔 오류는 favicon 404와 의도한 400뿐
   - `tests/test_search_api.py`에 `/chat` 200 확인 추가 (14개 통과)
+- 2026-10-27, release(beeabdf) 머지 후:
+  - `python -m unittest discover -s tests -v` 25개 통과 (release 10개 + RAG 15개, `/api/search`는 `api.routes`, `/api/rag/search`는 `api.search` 소유 확인 포함)
+  - `python run.py`(로컬 MQTT 브로커 없음 → 재연결 경고만, 기동 정상): `/api/rag/search` seed 케틀 질문 200 "100 °C" / `/api/search` 200 FTS5 자체 응답 / `/chat` 200 / `/` 200
+  - Chrome `/chat?session=seed`: 요청 URL `/api/rag/search`, "751년" 답변 + 출처
 - 서버 기동: `easyocr` 미설치 시 `api/frame` → `frame_sink` → `ocr_service`의 `import easyocr`에서 기동 실패 확인 → `requirements.txt` 전체 설치 후 정상
 
 ## 남은 일 / 이슈
@@ -178,5 +185,5 @@ READING IN TRANSLATION...`으로 시작
 - `gemini-2.5-flash` 일시 503(high demand) 경험 → 503은 재시도하지 않고 502로 응답
 - 실데이터 출처 잡음: 짧은·숫자 위주 조각은 품질 필터로 제외. 제목이 파일 경로(`D/007_Workspace/...`)인 행은 본문이 정상이라 남음 → 2번 OCR 쪽 제목 추출 문제
 - 대시보드 담당자에게 `<rag-chat>` 붙이는 방법 공유
-- 로컬 PC에 이번 세션 전부터 다른 Python 서버(PID 2544, 14:12 시작)가 `0.0.0.0:8000`을 쓰고 있음. uvicorn 기본(`127.0.0.1:8000`)과 같이 떠서 `localhost:8000`이 어느 쪽으로 갈지 헷갈릴 수 있음 → 테스트 전 확인하거나 다른 포트 사용
+- 테스트 중 QR 테스트용 옛 서버(PID 2544)가 `0.0.0.0:8000`에 남아 있었음 → 종료함. 테스트 전 8000 포트 확인
 - 실기기·터널 경유 `/chat`, github.io origin에서의 호출은 아직 확인 안 함

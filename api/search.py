@@ -1,4 +1,5 @@
-"""POST /api/search: RAG question answering over stored OCR documents (pec response format).
+"""POST /api/rag/search: RAG question answering over stored OCR documents (pec response format).
+(POST /api/search is the FTS5 search in api/routes.py; the response shapes are the same.)
 GET /chat: standalone page that shows only the <rag-chat> widget (for testing).
 
 Success: 200 {answer, sources:[{doc_id, title, preview, score}]}
@@ -48,7 +49,8 @@ class SearchRoute(APIRoute):
             try:
                 return await handler(request)
             except RequestValidationError as exc:
-                logger.info("invalid search request: %s", exc.errors())
+                # loc/type only: the raw input (user question) is not logged
+                logger.info("invalid search request: %s", [(e["loc"], e["type"]) for e in exc.errors()])
                 return error_response(INVALID_REQUEST)
 
         return route_handler
@@ -63,7 +65,7 @@ class SearchInput(BaseModel):
     session_id: Optional[str] = None
 
 
-@router.post("/api/search")
+@router.post("/api/rag/search")
 async def search_documents(body: SearchInput) -> Any:
     if body.session_id is not None and not SESSION_ID_RE.match(body.session_id):
         return error_response(INVALID_REQUEST)

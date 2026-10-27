@@ -20,7 +20,8 @@ from typing import List, Optional
 
 EMBEDDING_MODEL = os.getenv("GEMINI_EMBEDDING_MODEL", "gemini-embedding-001")
 EMBEDDING_DIM = int(os.getenv("GEMINI_EMBEDDING_DIM", "768"))
-CHAT_MODEL = os.getenv("GEMINI_CHAT_MODEL", "gemini-3.5-flash-lite")
+# 빈 값이면 기본 모델 (예비 모델은 빈 값 = 재시도 안 함)
+CHAT_MODEL = os.getenv("GEMINI_CHAT_MODEL") or "gemini-3.5-flash-lite"
 CHAT_FALLBACK_MODEL = os.getenv("GEMINI_CHAT_FALLBACK_MODEL", "gemini-3.5-flash")
 
 

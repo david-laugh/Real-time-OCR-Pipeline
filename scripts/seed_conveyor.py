@@ -1,5 +1,5 @@
 """컨베이어 테스트 HTML의 PASSAGES를 session_id='seed'로 ocr_documents에 저장한다.
-실제 OCR 없이 RAG 검색(/api/search)을 시험하기 위한 데이터.
+실제 OCR 없이 RAG 검색(/api/rag/search)을 시험하기 위한 데이터.
 
 사용법 (저장소 루트에서):
     python -m scripts.seed_conveyor C:\\Users\\1\\Downloads\\ocr-conveyor-test.html

@@ -1,5 +1,5 @@
 /*
- * <rag-chat> — question box that answers from stored OCR documents (POST /api/search).
+ * <rag-chat> — question box that answers from stored OCR documents (POST /api/rag/search).
  *
  * Usage (dashboard):
  *   <script src="/static/chat/rag-chat.js" defer></script>
@@ -7,7 +7,7 @@
  *   <rag-chat session-id="ab23cd45"></rag-chat>  search one session only
  *
  * Attributes (all optional):
- *   api-base    Server origin for /api/search. Default: location.origin
+ *   api-base    Server origin for /api/rag/search. Default: location.origin
  *   session-id  Limit search to this session ID. Empty/absent = all sessions
  *   limit       Number of sources (1-20). Default: 5
  *
@@ -249,7 +249,7 @@
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
       try {
-        const res = await fetch(`${this._apiBase()}/api/search`, {
+        const res = await fetch(`${this._apiBase()}/api/rag/search`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
